@@ -101,12 +101,24 @@ function setupPeer(peerId, initialNotificationId = null) {
     peers[peerId].notificationIds = [];
   });
   peer.on("data", (data) => recvMessage(data, peerId));
-  peer.on("error", (error) =>
-    console.debug(`Error with peer ${peerId}:`, error)
-  );
-  peer.on("close", () => {
+  peer.on("error", async (error) => {
+    console.debug(`Error with peer ${peerId}:`, error);
+    const notificationsToRemove = peers[peerId].notificationIds;
+    await Promise.all(
+      notificationsToRemove.map((notificationId) =>
+        remove(ref(db, `notifications/${notificationId}`))
+      )
+    );
+  });
+  peer.on("close", async () => {
     console.debug(`Disconnected from ${peerId}`);
     if (activeConnections > 0) activeConnections--;
+    const notificationsToRemove = peers[peerId].notificationIds;
+    await Promise.all(
+      notificationsToRemove.map((notificationId) =>
+        remove(ref(db, `notifications/${notificationId}`))
+      )
+    );
     delete peers[peerId];
     updatePeerCount();
   });

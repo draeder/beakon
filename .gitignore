@@ -1,4 +1,6 @@
 auth.js
+*.firebaserc
+
 # Logs
 logs
 *.log
