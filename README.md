@@ -12,11 +12,7 @@
 - Topic subscriptions
 - Video/Audio
 
-## Local Development
-1. Clone this repo
-2. `npm install`
-
-### Firebase
+### Firebase Preparation
 1. Install the firebase cli sdk
 2. Create a firebase project with a realtime database
 3. Create a file named `auth.js` inside the `web/public` folder and save your firebase information to that file
@@ -49,6 +45,12 @@ export default {
   }
 }
 ```
+
+## Local Development
+1. Clone this repo
+2. `npm install`
+3. `node web/server.js`
+4. Navigate to `http://localhost:3000` in multple browser tabs
 
 <!-- ## Install
 ### Node (coming soon)
