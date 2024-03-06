@@ -1,2 +1,2 @@
 # beakon
-A decentralized signaling server
+A decentralized signaling service

@@ -1,0 +1,29 @@
+{
+  "name": "beakon",
+  "version": "0.0.1",
+  "description": "A decentralized signaling server",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/draeder/beakon.git"
+  },
+  "keywords": [
+    "p2p",
+    "decentralization",
+    "webrtc"
+  ],
+  "author": "Daniel Raeder",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/draeder/beakon/issues"
+  },
+  "homepage": "https://github.com/draeder/beakon#readme",
+  "dependencies": {
+    "firebase": "^10.8.1",
+    "firebase-admin": "^12.0.0"
+  }
+}
