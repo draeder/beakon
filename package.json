@@ -23,7 +23,6 @@
   },
   "homepage": "https://github.com/draeder/beakon#readme",
   "dependencies": {
-    "firebase": "^10.8.1",
-    "firebase-admin": "^12.0.0"
+
   }
 }

@@ -172,9 +172,9 @@ function shareMessageHistoryWithPeer(peerId) {
   }
 }
 
-function count() {
+window.count = () => {
   return Object.keys(peers).filter((peerId) => peers[peerId].connected);
-}
+};
 
 function recvMessage(data, fromPeerId) {
   try {

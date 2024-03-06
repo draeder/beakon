@@ -14,15 +14,43 @@
 
 ## Local Development
 1. Clone this repo
+2. `npm install`
 
 ### Firebase
 1. Install the firebase cli sdk
-2. 
-1. Create a firebase project with a realtime database
-2. Create a file named `auth.js` inside the `web/public` folder
-3. Save your firebase credential information to that file
+2. Create a firebase project with a realtime database
+3. Create a file named `auth.js` inside the `web/public` folder and save your firebase information to that file
+```js
+export default {
+  apiKey: "<firebase-api-key>",
+  authDomain: "<firebase-api-auth-domain>",
+  databaseURL: "<firebase-database-url>",
+  projectId: "<firebase-project-id>",
+  storageBucket: "<firebase-storage-bucket>",
+  messagingSenderId: "<firebase-sender-id>",
+  appId: "<firebase-app-id>",
+  measurementId: "firebase-measurement-id",
+};
+```
+5. Adjust your firebase database rules as appropriate:
+```json
+{
+  "rules": {
+    "clients": {
+      ".read": true,
+      ".write": true
+    },
+    "notifications": {
+      ".read": true,
+      ".write": true
+    },
+    ".read": true,
+  	".write": true
+  }
+}
+```
 
-## Install
+<!-- ## Install
 ### Node (coming soon)
 ```
 npm install beakon
@@ -31,6 +59,11 @@ npm install beakon
 ### Browser (coming soon)
 ```html
 <script type="module" src=""></script>
-```
+``` -->
 
 ### Usage
+#### `send(data [[any]])`
+Send a broadcast message to all peers in the partial mesh network
+
+#### `count()`
+Return the peers in this peer's partial mesh
