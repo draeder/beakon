@@ -19,10 +19,12 @@ const db = getDatabase();
 const clientId = await generateRandomSHA1Hash();
 const peers = {};
 let activeConnections = 0;
-const maxPeers = 6;
+const minPeers = 3;
+const maxPeers = 9;
 const fanoutRatio = 0.5;
 const receivedMessageIds = new Set();
 const messageHistory = [];
+let seenPeers = (window.seen = new Set());
 let recv = {};
 
 async function registerClient() {
@@ -38,10 +40,25 @@ async function registerClient() {
   discoverPeers();
 }
 
+function peerBuffer(n, z) {
+  // Ensure the inputs are numbers and n is less than or equal to z
+  if (typeof n !== "number" || typeof z !== "number" || n > z) {
+    console.error("Invalid input: n must be less than or equal to z.");
+    return null;
+  }
+
+  // Calculate the random number
+  const randomNumber = Math.floor(Math.random() * (z - n + 1)) + n;
+  return randomNumber;
+}
+
 function listenForNotifications() {
   const notificationsRef = ref(db, "notifications");
   onChildAdded(notificationsRef, (snapshot) => {
-    if (Object.keys(peers).length > maxPeers) {
+    if (
+      Object.keys(peers).length >
+      peerBuffer(minPeers, maxPeers) + peerBuffer(minPeers, maxPeers)
+    ) {
       updatePeerCount();
       return;
     }
@@ -81,10 +98,41 @@ function setupPeer(peerId, initialNotificationId = null) {
   const peer = peers[peerId].peer;
   if (initialNotificationId)
     peers[peerId].notificationIds.push(initialNotificationId);
-  peer.on("signal", (data) => {
-    push(ref(db, "notifications"), { from: clientId, to: peerId, data }).then(
-      (pushRef) => peers[peerId].notificationIds.push(pushRef.key)
-    );
+  peer.on("signal", async (data) => {
+    try {
+      const pushRef = await push(ref(db, "notifications"), {
+        from: clientId,
+        to: peerId,
+        data,
+      });
+      peers[peerId].notificationIds.push(pushRef.key);
+
+      // Set a timeout to clean up this notification after 5 seconds
+      setTimeout(async () => {
+        try {
+          await remove(ref(db, `notifications/${pushRef.key}`));
+          console.debug(
+            `Successfully cleaned up notification ${pushRef.key} for peer ${peerId}.`
+          );
+
+          // Optionally, remove the notificationId from the peerInfo.notificationIds array
+          const index = peers[peerId].notificationIds.indexOf(pushRef.key);
+          if (index !== -1) {
+            peers[peerId].notificationIds.splice(index, 1);
+          }
+        } catch (error) {
+          console.error(
+            `Error cleaning notification ${pushRef.key} for ${peerId}:`,
+            error
+          );
+        }
+      }, 5000); // 5-second delay before attempting cleanup
+    } catch (error) {
+      console.error(
+        `Error sending notification from ${clientId} to ${peerId}:`,
+        error
+      );
+    }
   });
   peer.on("connect", async () => {
     console.debug(`Connected to ${peerId}`);
@@ -98,6 +146,7 @@ function setupPeer(peerId, initialNotificationId = null) {
       )
     );
     shareMessageHistoryWithPeer(peerId);
+    send(peerId, "connect");
     peers[peerId].notificationIds = [];
   });
   peer.on("data", (data) => recvMessage(data, peerId));
@@ -120,7 +169,9 @@ function setupPeer(peerId, initialNotificationId = null) {
       )
     );
     delete peers[peerId];
+    send(peerId, "disconnect");
     updatePeerCount();
+    // if (activeConnections < minPeers) discoverPeers();
   });
 }
 
@@ -150,24 +201,35 @@ function selectRandomPeers(peersArray, count) {
   return peersArray.slice(0, count);
 }
 
-const send = (window.send = (content) => {
+const send = (window.send = (content, type) => {
   const message = {
     gossipId: Math.random().toString(36).substring(2, 15),
     senderId: clientId,
+    type: type || "data",
     content,
   };
-  console.debug(`Sending message: ${content}`);
+  console.debug(`Sending message: ${JSON.stringify(message)}`);
   receivedMessageIds.add(message.gossipId);
-  messageHistory.push(message);
+  if (message.type === "data") {
+    messageHistory.push(message);
+  }
   broadcastMessage(message);
 });
+
+// Send heartbeats
+send(new Date(), "heartbeat");
+setInterval(() => {
+  send(new Date(), "heartbeat");
+}, 30 * 1000);
 
 function shareMessageHistoryWithPeer(peerId) {
   const peer = peers[peerId];
   if (peer && peer.connected) {
-    messageHistory.forEach((message) =>
-      peer.peer.send(JSON.stringify(message))
-    );
+    messageHistory.forEach((message) => {
+      if (message.type === "data") {
+        peer.peer.send(JSON.stringify(message));
+      }
+    });
     console.debug(`Shared message history with ${peerId}`);
   }
 }
@@ -180,13 +242,30 @@ function recvMessage(data, fromPeerId) {
   try {
     const message = JSON.parse(data);
     if (!receivedMessageIds.has(message.gossipId)) {
-      console.log(`Message from ${fromPeerId}: ${message.content}`);
+      if (message.type === "data") {
+        console.log(`Message from ${message.senderId}: ${message.content}`);
+      } else if (message.type === "heartbeat") {
+        // Corrected typo from 'message.tyoe' to 'message.type'
+        console.debug(`Heartbeat from ${message.senderId}`, message);
+        // Add the senderId to the seenPeers set
+        seenPeers.add(message.senderId);
+      } else if (message.type === "disconnect") {
+        if (seenPeers.has(message.content)) {
+          seenPeers.delete(message.content);
+          console.debug(`Peer ${message.content} has disconnected.`);
+        }
+      } else if (message.type === "connect") {
+        if (!seenPeers.has(message.content)) {
+          seenPeers.add(message.senderId);
+        }
+        console.debug(`Peer ${message.content} has connected.`);
+      }
       receivedMessageIds.add(message.gossipId);
       messageHistory.push(message);
       broadcastMessage(message);
     }
   } catch (error) {
-    console.error(`Error processing data from ${fromPeerId}:`, error);
+    console.debug(`Error processing data from ${fromPeerId}:`, error);
   }
 }
 

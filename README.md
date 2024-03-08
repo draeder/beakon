@@ -70,5 +70,9 @@ Send a broadcast message to all peers in the partial mesh network
 #### `count()`
 Return the peers in this peer's partial mesh
 
+#### `seen`
+Return the all known peers in the network
+> Seen peers are discovered through heartbeats they gossip through the partial mesh
+
 ### `messages`
 Return the message history a peer has
