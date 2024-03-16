@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Beakon - WebRTC Signaling</title>
+<!-- <script src="./index.js" type="module"></script> -->
+<script type="module">
+  import Beakon from "./index.js"
+  import auth from "./auth.js"
+  
+  const opts = {
+    pubnubConfig: auth,
+    minPeers: 2,
+    softCap: 6,
+    maxPeers: 9,
+    fanoutRatio: 0.33,
+    maxHistory: 10,
+    debug: true
+  }
+  
+  const beakon = new Beakon(opts)
+</script>
+</head>
+<body>
+<h2>Beakon - WebRTC Signaling</h2>
+
+</body>
+</html>

@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>WebRTC Signaling with Simple Peer</title>
+<!-- <script src="./index.js" type="module"></script> -->
+<script type="module">
+  import Beakon from "./index.js"
+
+  const opts = {
+    // peerId: '', // any unique string
+    heartbeat: 30, // heartbeet for network-wide peers
+    minPeers: 3, // minimum number of peers
+    maxPeers: 9, // maximum number of peers
+    discoveryInterval: 5, // (seconds) interval to attempt discovery again if peer count is less than minPeers
+    gossipRT: 5, // gossip retransmit attempts
+    gossipRTT: 150, // gossip retransmit delay
+    fanoutRatio: 0.6, // fanout ratio for gossip through partial mesh
+    messageHistoryMax: 50, // maximum number of message history items to share with peers
+    debug: true, // enable/disable debug logging
+    firebaseConfig: {}
+  }
+  
+  const beakon = new Beakon(opts)
+    
+  console.log("Beakon address:", beakon.address)
+  beakon.on("connect", peer => {
+    console.log("Connected to:", peer)
+    // beakon.get("history", data => console.log("History received:", data))
+  })
+  beakon.on("disconnect", peer => console.log("Disconnected from:", peer))
+  beakon.on("data", data => console.log("Data received:", data))
+  beakon.on("DEBUG", data => console.debug("DEBUG:", data))
+
+</script>
+</head>
+<body>
+<h2>WebRTC Communication with Simple Peer</h2>
+<button id="startVideo">Start Video Chat</button>
+</body>
+</html>

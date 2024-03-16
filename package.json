@@ -1,11 +1,11 @@
 {
   "name": "beakon",
   "version": "0.0.1",
-  "description": "A decentralized signaling server",
-  "main": "index.js",
+  "description": "A decentralized signaling service",
+  "main": "dist/beakon.bundle.js",
   "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "npx parcel build index.js --dist-dir ./dist"
   },
   "repository": {
     "type": "git",
@@ -22,7 +22,15 @@
     "url": "https://github.com/draeder/beakon/issues"
   },
   "homepage": "https://github.com/draeder/beakon#readme",
+  "devDependencies": {
+    "@babel/core": "^7.24.0",
+    "@babel/preset-env": "^7.24.0",
+    "babelify": "^10.0.0",
+    "puppeteer": "^22.4.1"
+  },
   "dependencies": {
-
+    "firebase": "^10.8.1",
+    "firebase-admin": "^12.0.0",
+    "simple-peer": "^9.11.1"
   }
 }
