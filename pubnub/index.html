@@ -3,7 +3,20 @@
 <head>
 <meta charset="UTF-8">
 <title>Beakon - WebRTC Signaling</title>
-<!-- <script src="./index.js" type="module"></script> -->
+<style>
+  #messages {
+    background-color: #f0f0f0;
+    padding: 10px;
+    margin-top: 20px;
+    height: 300px;
+    overflow-y: scroll;
+    border: 1px solid #ccc;
+  }
+  .message {
+    margin-bottom: 10px;
+  }
+</style>
+<script src="./index.js" type="module"></script>
 <script type="module">
   import Beakon from "./index.js"
   import auth from "./auth.js"
@@ -18,11 +31,38 @@
     debug: true
   }
   
-  const beakon = new Beakon(opts)
+  document.addEventListener("DOMContentLoaded", function() {
+    const beakon = new Beakon(opts);
+
+    // Example of extending Beakon to include a method for displaying messages
+    beakon.displayMessage = function(senderId, message, timestamp) {
+      const messageContainer = document.getElementById('messages');
+      
+      // Format timestamp to human-readable format
+      const date = new Date(timestamp);
+      const formattedDate = date.toLocaleTimeString(); // You can adjust formatting
+      
+      // Determine the sender's name
+      const senderName = (senderId === beakon.peerId) ? 'You' : senderId;
+      
+      // Create the message element
+      const messageElement = document.createElement('div');
+      messageElement.classList.add('message');
+      messageElement.innerHTML = `<b>${senderName}</b> (${formattedDate}): ${message}`;
+      
+      // Append the message element to the container
+      messageContainer.appendChild(messageElement);
+    };
+
+    // You should integrate a way to call beakon.displayMessage() whenever a message is received.
+    // This might involve adding event listeners or modifying methods within the Beakon class
+    // to handle incoming messages.
+  });
 </script>
 </head>
 <body>
 <h2>Beakon - WebRTC Signaling</h2>
+<div id="messages"></div>
 
 </body>
 </html>

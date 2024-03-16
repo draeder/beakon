@@ -1,6 +1,48 @@
 import SimplePeer from "https://jspm.dev/simple-peer";
 import PubNub from "https://jspm.dev/pubnub";
 
+class EventEmitter {
+  constructor() {
+    this.events = {};
+  }
+
+  on = (event, listener) => {
+    if (!this.events[event]) {
+      this.events[event] = [];
+    }
+    this.events[event].push(listener);
+  };
+
+  once = (event, listener) => {
+    const onceWrapper = (...args) => {
+      this.off(event, onceWrapper);
+      listener(...args);
+    };
+    onceWrapper.originalListener = listener;
+
+    this.on(event, onceWrapper);
+  };
+
+  off = (event, listener) => {
+    if (!this.events[event]) {
+      return;
+    }
+    this.events[event] = this.events[event].filter(
+      (l) => l !== listener && l.originalListener !== listener
+    );
+  };
+
+  emit = (event, ...args) => {
+    if (!this.events[event]) {
+      return;
+    }
+    const listeners = [...this.events[event]];
+    listeners.forEach((listener) => {
+      listener(...args);
+    });
+  };
+}
+
 async function generateAndStoreKeyPair() {
   const keyPair = await window.crypto.subtle.generateKey(
     {
@@ -154,20 +196,40 @@ class Beakon {
   }
 
   handleSignal(peerId, signal) {
+    // This is executed by an existing peer when it receives a signal via PubNub
+    if (!this.peers[peerId]) {
+      this.createPeer(peerId, false); // false indicating this peer is not the initiator
+    }
+    // Direct signaling through the P2P connection if it exists
     if (this.peers[peerId]) {
-      this.relaySignal(peerId, signal);
-    } else {
-      this.createPeer(peerId, false);
       this.peers[peerId].signal(signal);
+    } else {
+      // If for some reason the P2P connection doesn't exist, log an error or handle accordingly
+      console.error("Failed to relay signal over P2P network; peer not found.");
     }
   }
 
+  signalThroughPubNub(peerId, signal) {
+    this.pubnub.publish({
+      channel: "peersChannel",
+      message: {
+        sender: this.peerId,
+        type: "signal",
+        data: JSON.stringify(signal),
+        target: peerId,
+      },
+    });
+  }
+
   relaySignal(targetPeerId, signal) {
-    Object.values(this.peers).forEach((peer) => {
-      if (peer.connected) {
+    // Example: Relay signal to all connected peers
+    Object.keys(this.peers).forEach((peerId) => {
+      const peer = this.peers[peerId];
+      if (peer && peer.connected) {
+        // Send a signaling message through the peer data channel
         peer.send(
           JSON.stringify({
-            type: "webrtc-signal",
+            type: "relay-signal",
             target: targetPeerId,
             signal: signal,
           })
@@ -221,20 +283,10 @@ class Beakon {
     let last;
     peer.on("data", (data) => {
       if (last === data) return;
+      let parsedData;
       try {
         last = data;
-        const parsedData = JSON.parse(data);
-
-        if (
-          parsedData.type === "webrtc-signal" &&
-          parsedData.target === this.peerId
-        ) {
-          if (this.peers[parsedData.sender]) {
-            this.peers[parsedData.sender].signal(parsedData.signal);
-          }
-          return;
-        }
-
+        parsedData = JSON.parse(data);
         if (this.opts.debug === true) console.debug("DEBUG:", parsedData);
         if (parsedData.to && parsedData.to !== this.peerId) return;
         if (
@@ -252,6 +304,14 @@ class Beakon {
         this.send(parsedData);
       } catch (error) {
         console.error(`Error parsing data from ${peerId}:`, error);
+      }
+      // Add handling for relayed signaling messages
+      if (
+        parsedData.type === "relay-signal" &&
+        parsedData.target === this.peerId
+      ) {
+        // If this peer is the target, process the relayed signal
+        this.handleSignal(parsedData.sender, parsedData.signal);
       }
     });
 
@@ -330,12 +390,14 @@ class Beakon {
   }
 
   selectPeersToSend(data, targetPeerIds) {
-    const peerKeys = Object.keys(this.peers).filter(
-      (peerId) => peerId !== this.peerId
-    );
+    const peerKeys = Object.keys(this.peers);
     let filteredPeerIds = targetPeerIds
-      ? peerKeys.filter((peerId) => targetPeerIds.includes(peerId))
-      : peerKeys.filter((peerId) => peerId !== data.gossiperId);
+      ? peerKeys.filter(
+          (peerId) => targetPeerIds.includes(peerId) && peerId !== this.peerId
+        )
+      : peerKeys.filter(
+          (peerId) => peerId !== this.peerId && peerId !== data.gossiperId
+        );
 
     if (!targetPeerIds && this.opts.fanoutRatio) {
       const fanoutCount = Math.ceil(
@@ -347,16 +409,12 @@ class Beakon {
       );
     }
 
-    if (
-      filteredPeerIds.length < this.opts.minPeers &&
-      peerKeys.length === this.opts.minPeers
-    ) {
-      return peerKeys;
-    } else if (filteredPeerIds.length < this.opts.minPeers) {
+    if (filteredPeerIds.length < this.opts.minPeers) {
       const additionalPeersNeeded = this.opts.minPeers - filteredPeerIds.length;
       const availablePeers = peerKeys.filter(
-        (peerId) => !filteredPeerIds.includes(peerId)
+        (peerId) => !filteredPeerIds.includes(peerId) && peerId !== this.peerId
       );
+      // Shuffle to randomize selection and then take as many as needed
       const additionalPeers = this.shuffleArray(availablePeers).slice(
         0,
         additionalPeersNeeded
