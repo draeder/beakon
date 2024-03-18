@@ -15,8 +15,10 @@
   .message {
     margin-bottom: 10px;
   }
+  #sendSection {
+    margin-top: 20px;
+  }
 </style>
-<script src="./index.js" type="module"></script>
 <script type="module">
   import Beakon from "./index.js"
   import auth from "./auth.js"
@@ -31,38 +33,52 @@
     debug: true
   }
   
-  document.addEventListener("DOMContentLoaded", function() {
+  document.addEventListener("DOMContentLoaded", async function() {
     const beakon = new Beakon(opts);
+    
+    // Function to handle sending messages
+    function sendMessage() {
+      const inputField = document.getElementById('messageInput');
+      const message = inputField.value || Math.floor(Math.random() * 1000).toString();
+      beakon.send(message); // Implement this method in Beakon class
+      inputField.value = ''; // Clear input field after sending
+    }
 
-    // Example of extending Beakon to include a method for displaying messages
-    beakon.displayMessage = function(senderId, message, timestamp) {
+    document.getElementById('sendButton').addEventListener('click', sendMessage);
+    
+    document.getElementById('messageInput').addEventListener('keypress', (event) => {
+      if (event.key === 'Enter') {
+        sendMessage();
+      }
+    });
+
+    beakon.on('data', (data) => {
+      displayMessage(data.senderId, data.content, data.date);
+    });
+
+    function displayMessage(senderId, message, timestamp) {
       const messageContainer = document.getElementById('messages');
       
-      // Format timestamp to human-readable format
       const date = new Date(timestamp);
-      const formattedDate = date.toLocaleTimeString(); // You can adjust formatting
+      const formattedDate = date.toLocaleString();
       
-      // Determine the sender's name
       const senderName = (senderId === beakon.peerId) ? 'You' : senderId;
       
-      // Create the message element
       const messageElement = document.createElement('div');
       messageElement.classList.add('message');
-      messageElement.innerHTML = `<b>${senderName}</b> (${formattedDate}): ${message}`;
+      messageElement.innerHTML = `<b>${senderName}</b> at ${formattedDate}: ${message}`;
       
-      // Append the message element to the container
       messageContainer.appendChild(messageElement);
-    };
-
-    // You should integrate a way to call beakon.displayMessage() whenever a message is received.
-    // This might involve adding event listeners or modifying methods within the Beakon class
-    // to handle incoming messages.
+    }
   });
 </script>
 </head>
 <body>
 <h2>Beakon - WebRTC Signaling</h2>
 <div id="messages"></div>
-
+<div id="sendSection">
+  <input type="text" id="messageInput" placeholder="Enter message or send a random number"/>
+  <button id="sendButton">Send</button>
+</div>
 </body>
 </html>

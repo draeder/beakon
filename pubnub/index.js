@@ -119,6 +119,13 @@ generateAndStoreKeyPair();
 
 class Beakon {
   constructor(opts) {
+    const emitter = new EventEmitter();
+
+    this.on = (event, listener) => emitter.on(event, listener);
+    this.once = (event, listener) => emitter.once(event, listener);
+    this.off = (event, listener) => emitter.off(event, listener);
+    this.emit = (event, data) => emitter.emit(event, data);
+
     this.pubnub = new PubNub(opts.pubnubConfig);
     this.peers = new Set();
     this.opts = opts;
@@ -280,6 +287,35 @@ class Beakon {
       });
     });
 
+    // let last;
+    // peer.on("data", (data) => {
+    //   if (last === data) return;
+    //   try {
+    //     last = data;
+    //     const parsedData = JSON.parse(data);
+    //     if (this.opts.debug === true) console.debug("DEBUG:", parsedData);
+
+    //     // Avoid processing if the message is from the peer itself or if it's already been seen
+    //     if (
+    //       parsedData.senderId === this.peerId ||
+    //       this.seenMessageIds.has(parsedData.messageId)
+    //     ) {
+    //       if (this.opts.debug)
+    //         console.debug("DEBUG: Already seen message or own message.");
+    //       return;
+    //     }
+
+    //     // Add the message to seen to avoid duplicating processing
+    //     this.seenMessageIds.add(parsedData.messageId);
+    //     console.log(`Data from ${parsedData.senderId}:`, parsedData);
+
+    //     // Emit the data event for new, incoming messages
+    //     this.emit("data", parsedData);
+    //   } catch (error) {
+    //     console.error(`Error parsing data from peer:`, error);
+    //   }
+    // });
+
     let last;
     peer.on("data", (data) => {
       if (last === data) return;
@@ -305,7 +341,6 @@ class Beakon {
       } catch (error) {
         console.error(`Error parsing data from ${peerId}:`, error);
       }
-      // Add handling for relayed signaling messages
       if (
         parsedData.type === "relay-signal" &&
         parsedData.target === this.peerId
@@ -361,10 +396,12 @@ class Beakon {
       content: typeof data === "object" ? data.content : data,
     };
 
+    if (!this.seenMessages.includes(message)) this.emit("data", message);
     this.addSeenMessage(message);
 
     let peersToSend = this.selectPeersToSend(data, targetPeerIds);
-    if (peersToSend.length < 1) peersToSend = Object.keys(this.peers);
+    if (peersToSend.length < this.minPeers)
+      peersToSend = Object.keys(this.peers);
 
     if (this.opts.debug) console.debug("DEBUG: Gossiping to:", peersToSend);
 
@@ -393,21 +430,17 @@ class Beakon {
     const peerKeys = Object.keys(this.peers);
     let filteredPeerIds = targetPeerIds
       ? peerKeys.filter(
-          (peerId) => targetPeerIds.includes(peerId) && peerId !== this.peerId
+          (peerId) =>
+            targetPeerIds.includes(peerId) &&
+            peerId !== this.peerId &&
+            peerId !== data.senderId
         )
       : peerKeys.filter(
-          (peerId) => peerId !== this.peerId && peerId !== data.gossiperId
+          (peerId) =>
+            peerId !== this.peerId &&
+            peerId !== data.gossiperId &&
+            peerId !== data.senderId
         );
-
-    if (!targetPeerIds && this.opts.fanoutRatio) {
-      const fanoutCount = Math.ceil(
-        filteredPeerIds.length * this.opts.fanoutRatio
-      );
-      filteredPeerIds = this.shuffleArray(filteredPeerIds).slice(
-        0,
-        fanoutCount
-      );
-    }
 
     if (filteredPeerIds.length < this.opts.minPeers) {
       const additionalPeersNeeded = this.opts.minPeers - filteredPeerIds.length;
@@ -420,6 +453,16 @@ class Beakon {
         additionalPeersNeeded
       );
       filteredPeerIds = filteredPeerIds.concat(additionalPeers);
+    }
+
+    if (!targetPeerIds && this.opts.fanoutRatio) {
+      const fanoutCount = Math.ceil(
+        filteredPeerIds.length * this.opts.fanoutRatio
+      );
+      filteredPeerIds = this.shuffleArray(filteredPeerIds).slice(
+        0,
+        fanoutCount
+      );
     }
 
     return filteredPeerIds;
