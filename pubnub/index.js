@@ -203,16 +203,19 @@ class Beakon {
   }
 
   handleSignal(peerId, signal) {
-    // This is executed by an existing peer when it receives a signal via PubNub
     if (!this.peers[peerId]) {
-      this.createPeer(peerId, false); // false indicating this peer is not the initiator
+      this.createPeer(peerId, false);
     }
     // Direct signaling through the P2P connection if it exists
     if (this.peers[peerId]) {
+      console.debug("DEBUG:", "Using existing P2P network for signaling");
       this.peers[peerId].signal(signal);
     } else {
       // If for some reason the P2P connection doesn't exist, log an error or handle accordingly
-      console.error("Failed to relay signal over P2P network; peer not found.");
+      console.debug(
+        "DEBUG:",
+        "Failed to relay signal over P2P network; peer not found."
+      );
     }
   }
 
@@ -287,35 +290,6 @@ class Beakon {
       });
     });
 
-    // let last;
-    // peer.on("data", (data) => {
-    //   if (last === data) return;
-    //   try {
-    //     last = data;
-    //     const parsedData = JSON.parse(data);
-    //     if (this.opts.debug === true) console.debug("DEBUG:", parsedData);
-
-    //     // Avoid processing if the message is from the peer itself or if it's already been seen
-    //     if (
-    //       parsedData.senderId === this.peerId ||
-    //       this.seenMessageIds.has(parsedData.messageId)
-    //     ) {
-    //       if (this.opts.debug)
-    //         console.debug("DEBUG: Already seen message or own message.");
-    //       return;
-    //     }
-
-    //     // Add the message to seen to avoid duplicating processing
-    //     this.seenMessageIds.add(parsedData.messageId);
-    //     console.log(`Data from ${parsedData.senderId}:`, parsedData);
-
-    //     // Emit the data event for new, incoming messages
-    //     this.emit("data", parsedData);
-    //   } catch (error) {
-    //     console.error(`Error parsing data from peer:`, error);
-    //   }
-    // });
-
     let last;
     peer.on("data", (data) => {
       if (last === data) return;
@@ -345,7 +319,6 @@ class Beakon {
         parsedData.type === "relay-signal" &&
         parsedData.target === this.peerId
       ) {
-        // If this peer is the target, process the relayed signal
         this.handleSignal(parsedData.sender, parsedData.signal);
       }
     });
