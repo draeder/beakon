@@ -344,7 +344,7 @@ class Beakon {
       this.seenMessages.shift();
   }
 
-  async send(data, targetPeerIds = null, retries = 0) {
+  async send(data, targetPeerIds = null, type = null, retries = 0) {
     let gossipId = !data.gossipId
       ? await this.generateRandomSHA1Hash()
       : data.gossipId;
@@ -361,6 +361,7 @@ class Beakon {
       date: data.date ? data.date : new Date().getTime(),
       gossipId: gossipId,
       to: targetPeerIds,
+      type: type,
       content: typeof data === "object" ? data.content : data,
     };
 
