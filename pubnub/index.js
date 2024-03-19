@@ -206,12 +206,10 @@ class Beakon {
     if (!this.peers[peerId]) {
       this.createPeer(peerId, false);
     }
-    // Direct signaling through the P2P connection if it exists
     if (this.peers[peerId]) {
       console.debug("DEBUG:", "Using existing P2P network for signaling");
       this.peers[peerId].signal(signal);
     } else {
-      // If for some reason the P2P connection doesn't exist, log an error or handle accordingly
       console.debug(
         "DEBUG:",
         "Failed to relay signal over P2P network; peer not found."
@@ -232,11 +230,9 @@ class Beakon {
   }
 
   relaySignal(targetPeerId, signal) {
-    // Example: Relay signal to all connected peers
     Object.keys(this.peers).forEach((peerId) => {
       const peer = this.peers[peerId];
       if (peer && peer.connected) {
-        // Send a signaling message through the peer data channel
         peer.send(
           JSON.stringify({
             type: "relay-signal",
@@ -284,9 +280,8 @@ class Beakon {
       if (this.opts.debug) console.debug(`DEBUG: Connected to peer: ${peerId}`);
       this.seenMessages.forEach((message) => {
         console.debug("DEBUG: Trying to send history.", message);
-        setTimeout(() => {
-          this.send(message);
-        }, 150);
+        this.send(message);
+        setTimeout(() => {}, 150);
       });
     });
 
@@ -420,7 +415,6 @@ class Beakon {
       const availablePeers = peerKeys.filter(
         (peerId) => !filteredPeerIds.includes(peerId) && peerId !== this.peerId
       );
-      // Shuffle to randomize selection and then take as many as needed
       const additionalPeers = this.shuffleArray(availablePeers).slice(
         0,
         additionalPeersNeeded
@@ -428,9 +422,13 @@ class Beakon {
       filteredPeerIds = filteredPeerIds.concat(additionalPeers);
     }
 
-    if (!targetPeerIds && this.opts.fanoutRatio) {
+    if (!targetPeerIds) {
+      const dynamicFanoutRatio =
+        this.opts.minFanout +
+        Math.random() * (this.opts.maxFanout - this.opts.minFanout);
+
       const fanoutCount = Math.ceil(
-        filteredPeerIds.length * this.opts.fanoutRatio
+        filteredPeerIds.length * dynamicFanoutRatio
       );
       filteredPeerIds = this.shuffleArray(filteredPeerIds).slice(
         0,
