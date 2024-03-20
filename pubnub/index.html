@@ -53,6 +53,11 @@
       }
     });
 
+    beakon.on('peer', (peer) => {
+      console.debug("Peer event:", peer)
+      // do something with Beakon peers
+    })
+
     beakon.on('data', (data) => {
       displayMessage(data.senderId, data.content, data.date);
     });
