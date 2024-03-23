@@ -69,19 +69,21 @@ Initialize Beakon with the passed in options.
 
 ###### `opts` [[object]]
 ```js
-{
-  peerId: '', // any unique string
-  minPeers: 3, // minimum number of peers
-  maxPeers: 9, // maximum number of peers
-  discoveryInterval: 5, // (seconds) interval to attempt discovery again if peer count is less than minPeers
-  gossipRTT: 150, // retransmit time for gossip
-  gossipRT: 3, // retransmit attempts
-  fanoutRatio: 0.5, // fanout ratio for gossip through partial mesh
-  history: () =>{
-    // custom function to manage message history object
+const opts = {
+  pubnubConfig: {
+    publishKey: "",
+    subscribeKey: "",
+    userId: "",
   },
-  debug: true, // enable/disable debug logging
-}
+  simplePeerOpts: { wrtc: wrtc },
+  minPeers: 2,
+  softCap: 6,
+  maxPeers: 9,
+  minFanout: 0.33,
+  maxFanout: 0.66,
+  maxHistory: 10,
+  debug: false,
+};
 ```
 
 #### Methods

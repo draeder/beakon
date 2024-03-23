@@ -310,7 +310,7 @@ class Beakon {
 
   async send(data, to, type, retries = 0) {
     // stagger messages to avoid race conditions
-    const randomDelay = Math.floor(Math.random() * 10);
+    const randomDelay = Math.floor(Math.random() * 50);
     await delay(randomDelay);
 
     if (this.last === data) return;
@@ -320,6 +320,8 @@ class Beakon {
     let messageId = data.messageId
       ? data.messageId
       : await this.generateRandomSHA1Hash();
+
+    let date = data.date ? data.date : new Date().getTime();
 
     if (this.lastGossipID === data.gossipId) return;
     this.lastGossipID = data.gossipId;
@@ -332,7 +334,7 @@ class Beakon {
       messageId: messageId,
       senderId: data.senderId ? data.senderId : this.peerId,
       gossiperId: this.peerId,
-      date: data.date ? data.date : new Date().getTime(),
+      date: date,
       gossipId: gossipId,
       to: targetPeerIds,
       type: type,
@@ -358,9 +360,7 @@ class Beakon {
             `Error sending to peer. ${peerId} is no longer connected.`
           );
         delete this.peers[peerId];
-        setTimeout(async () => {
-          await this.send(data, targetPeerIds);
-        }, 150);
+        await this.send(data, targetPeerIds);
       }
     }
     this.last === data;
