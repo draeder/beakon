@@ -5,7 +5,7 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    
+    "test": "mocha --require @babel/register 'test/**/*.js'"
   },
   "repository": {
     "type": "git",
@@ -22,7 +22,13 @@
     "url": "https://github.com/draeder/beakon/issues"
   },
   "homepage": "https://github.com/draeder/beakon#readme",
+  "presets": ["@babel/preset-env"],
   "devDependencies": {
+    "@babel/core": "^7.24.3",
+    "@babel/preset-env": "^7.24.3",
+    "@babel/register": "^7.23.7",
+    "chai": "^5.1.0",
+    "mocha": "^10.3.0",
     "webrtc": "^1.14.1"
   },
   "dependencies": {
