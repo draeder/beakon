@@ -41,7 +41,7 @@ describe("Beakon Networking", function () {
     }
 
     // Additional delay to ensure all peers are ready before sending messages
-    await delay(10000); // Wait for peer connections to stabilize
+    await delay(20000); // Wait for peer connections to stabilize
 
     console.log("All peers should now be ready. Starting to send messages.");
 
@@ -53,7 +53,7 @@ describe("Beakon Networking", function () {
     });
 
     // Wait for all messages to be exchanged
-    await delay(20000);
+    await delay(1000);
 
     // Log received messages for debugging
     console.log(
