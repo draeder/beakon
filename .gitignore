@@ -1,6 +1,8 @@
-test.js
-auth.js
+test2.*
+
 *.firebaserc
+firebase
+pubnub
 
 # Logs
 logs

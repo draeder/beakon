@@ -1,5 +1,15 @@
-import SimplePeer from "https://jspm.dev/simple-peer";
-import PubNub from "https://jspm.dev/pubnub";
+let SimplePeer, PubNub;
+
+const isBrowser =
+  typeof window !== "undefined" && typeof window.document !== "undefined";
+
+if (isBrowser) {
+  SimplePeer = (await import("https://jspm.dev/simple-peer")).default;
+  PubNub = (await import("https://jspm.dev/pubnub")).default;
+} else {
+  SimplePeer = (await import("simple-peer")).default;
+  PubNub = (await import("pubnub")).default;
+}
 
 class Beakon {
   constructor(opts) {
@@ -10,27 +20,50 @@ class Beakon {
     this.off = (event, listener) => emitter.off(event, listener);
     this.emit = (event, data) => emitter.emit(event, data);
 
+    this.opts = opts;
+    if (!isBrowser && !opts.simplePeerOpts.wrtc)
+      return console.error(
+        "Error: opts.simplePeerOpts.wrtc is required for node.js instances."
+      );
     this.pubnub = new PubNub(opts.pubnubConfig);
     this.peers = new Set();
-    this.opts = opts;
     this.seenGossipIds = new Set();
     this.seenMessageIds = new Set();
     this.seenMessages = [];
+    this.last = "";
+    this.simplePeerOpts = opts.simplePeerOpts;
     this.init();
-    window.beakon = this;
+    if (isBrowser) window.beakon = this;
   }
 
   async init() {
     this.peerId = this.opts.peerId || (await this.generateRandomSHA1Hash());
     console.log("This peer ID", this.peerId);
+
     this.setupListeners();
     this.announcePresence();
   }
 
   async generateRandomSHA1Hash() {
     const array = new Uint8Array(20);
-    window.crypto.getRandomValues(array);
-    const hashBuffer = await crypto.subtle.digest("SHA-1", array);
+    let hashBuffer;
+
+    if (isBrowser) {
+      window.crypto.getRandomValues(array);
+      hashBuffer = await window.crypto.subtle.digest("SHA-1", array);
+    } else {
+      const dotenv = await import("dotenv");
+      dotenv.config();
+
+      const crypto = await import("crypto");
+      crypto.randomFillSync(array);
+      const hash = crypto.createHash("sha1");
+      hash.update(array);
+      // For Node.js, the hash.digest() returns a Buffer, so we directly use it
+      return hash.digest("hex");
+    }
+
+    // This part is for browsers, as Node.js uses the return inside the else block
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
   }
@@ -147,8 +180,15 @@ class Beakon {
       return;
     }
     if (this.opts.debug === true)
-      console.debug("DEBUG: Creating peer...", { initiator, peerId });
-    const peer = new SimplePeer({ initiator, trickle: true });
+      console.debug("DEBUG: Creating peer...", {
+        initiator,
+        peerId,
+      });
+    const peer = new SimplePeer({
+      initiator,
+      trickle: true,
+      wrtc: this.opts.simplePeerOpts.wrtc,
+    });
 
     peer.on("signal", (signal) => {
       this.pubnub.publish({
@@ -164,20 +204,23 @@ class Beakon {
 
     peer.on("connect", () => {
       if (this.opts.debug) console.debug(`DEBUG: Connected to peer: ${peerId}`);
-      this.emit("peer", { peer, state: "connected" }); // emit peer for use with other integrations
-      this.seenMessages.forEach((message) => {
-        // if (this.opts.debug === true)
-        //   console.debug("DEBUG: Trying to send history.", message);
-        // setTimeout(() => this.send(message), 150);
-      });
+
+      this.emit("peer", { id: peerId, state: "connected", connection: peer });
+
+      if (this.seenMessages.length > 0)
+        this.seenMessages.forEach((message) => {
+          if (this.opts.debug === true)
+            console.debug("DEBUG: Trying to send history.", message);
+          setTimeout(() => this.send(message, message.to), 150);
+        });
     });
 
-    let last;
+    // let last;
     peer.on("data", (data) => {
-      if (last === data) return;
+      // if (last === data) return;
       let parsedData;
       try {
-        last = data;
+        // last = data;
         parsedData = JSON.parse(data);
         if (this.opts.debug === true) console.debug("DEBUG:", parsedData);
         if (parsedData.to && parsedData.to !== this.peerId) return;
@@ -191,7 +234,7 @@ class Beakon {
         }
         this.addSeenMessage(parsedData);
         this.seenMessageIds.add(parsedData.messageId);
-        console.log(`Data from ${parsedData.senderId}:`, parsedData);
+        // console.log(`Data from ${parsedData.senderId}:`, parsedData);
 
         this.send(parsedData, parsedData.to);
       } catch (error) {
@@ -208,12 +251,12 @@ class Beakon {
     peer.on("close", () => {
       if (this.opts.debug === true)
         console.debug(`Disconnected from peer: ${peerId}`);
-      this.emit("peer", { peerId, state: "disconnected" });
+      this.emit("peer", { id: peerId, state: "disconnected" });
       delete this.peers[peerId];
       const peerCount = Object.keys(this.peers).length;
       if (this.opts.debug === true)
         console.debug("DEBUG: Peers in partial mesh:", peerCount);
-      if (peerCount <= 1) this.reinitialize();
+      // if (peerCount <= 1) this.reinitialize();
     });
 
     peer.on("error", (error) => {
@@ -221,7 +264,7 @@ class Beakon {
       const peerCount = Object.keys(this.peers).length;
       if (this.opts.debug === true)
         console.debug(`DEBUG: Error with peer ${peerId}:`, error);
-      if (peerCount <= 1) this.reinitialize();
+      // if (peerCount <= 1) this.reinitialize();
     });
 
     this.peers[peerId] = peer;
@@ -234,6 +277,7 @@ class Beakon {
   }
 
   async send(data, to, type = null, retries = 0) {
+    if (this.last === data) return;
     let gossipId = !data.gossipId
       ? await this.generateRandomSHA1Hash()
       : data.gossipId;
@@ -273,17 +317,10 @@ class Beakon {
             `Error sending to peer. ${peerId} is no longer connected.`
           );
         delete this.peers[peerId];
-
-        if (retries < 3) {
-          if (this.opts.debug)
-            console.debug(
-              `DEBUG: Retrying message send (attempt ${retries + 1})`
-            );
-          await this.send(data, targetPeerIds, retries + 1);
-          break;
-        }
+        await this.send(data, targetPeerIds);
       }
     }
+    this.last === data;
   }
 
   selectPeersToSend(data, targetPeerIds) {
@@ -339,20 +376,20 @@ class Beakon {
     return array;
   }
 
-  async reinitialize() {
-    setTimeout(async () => {
-      if (this.opts.debug) console.debug("Reinitializing beakon . . . ");
-      await this.destroy();
-      let opts = this.opts;
-      window.beakon = null;
-      new Beakon(opts);
-    }, 5000);
-  }
+  // async reinitialize() {
+  //   setTimeout(async () => {
+  //     if (this.opts.debug) console.debug("Reinitializing beakon . . . ");
+  //     await this.destroy();
+  //     let opts = this.opts;
+  //     if (isBrowser) window.beakon = null;
+  //     new Beakon(opts);
+  //   }, 5000);
+  // }
 
-  async destroy() {
-    await this.pubnub.unsubscribeAll();
-    await Promise.all(Object.values(this.peers).map((peer) => peer.destroy()));
-  }
+  // async destroy() {
+  //   await this.pubnub.unsubscribeAll();
+  //   await Promise.all(Object.values(this.peers).map((peer) => peer.destroy()));
+  // }
 }
 
 export default Beakon;
@@ -398,152 +435,3 @@ class EventEmitter {
     });
   };
 }
-
-async function generateAndStoreECDSAKeyPair() {
-  const keyPair = await window.crypto.subtle.generateKey(
-    { name: "ECDSA", namedCurve: "P-384" },
-    true,
-    ["sign", "verify"]
-  );
-  const publicKey = await exportKey(keyPair.publicKey, "spki");
-  const privateKey = await exportKey(keyPair.privateKey, "pkcs8");
-  localStorage.setItem("ecdsaPublicKey", publicKey);
-  localStorage.setItem("ecdsaPrivateKey", privateKey);
-}
-
-async function signMessage(message) {
-  const privateKeyBase64 = localStorage.getItem("ecdsaPrivateKey");
-  const encoder = new TextEncoder();
-  const data = encoder.encode(message);
-  return signData(privateKeyBase64, data);
-}
-
-async function verifyMessage(publicKeyBase64, message, signature) {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(message);
-  return verifySignature(publicKeyBase64, data, signature);
-}
-
-async function signData(privateKey, data) {
-  const privateKeyObj = await window.crypto.subtle.importKey(
-    "pkcs8",
-    base64ToArrayBuffer(privateKey),
-    { name: "ECDSA", namedCurve: "P-384" },
-    true,
-    ["sign"]
-  );
-  const signature = await window.crypto.subtle.sign(
-    { name: "ECDSA", hash: { name: "SHA-256" } },
-    privateKeyObj,
-    data
-  );
-  return arrayBufferToBase64(signature);
-}
-
-async function verifySignature(publicKey, data, signature) {
-  const publicKeyObj = await window.crypto.subtle.importKey(
-    "spki",
-    base64ToArrayBuffer(publicKey),
-    { name: "ECDSA", namedCurve: "P-384" },
-    true,
-    ["verify"]
-  );
-  return await window.crypto.subtle.verify(
-    { name: "ECDSA", hash: { name: "SHA-256" } },
-    publicKeyObj,
-    base64ToArrayBuffer(signature),
-    data
-  );
-}
-
-async function exportKey(key, format) {
-  const exportedKey = await window.crypto.subtle.exportKey(format, key);
-  return arrayBufferToBase64(exportedKey);
-}
-
-function arrayBufferToBase64(buffer) {
-  let binary = "";
-  const bytes = new Uint8Array(buffer);
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return window.btoa(binary);
-}
-
-function base64ToArrayBuffer(base64) {
-  const binaryString = window.atob(base64);
-  const bytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes.buffer;
-}
-
-async function generateSymmetricKey() {
-  const key = await window.crypto.subtle.generateKey(
-    { name: "AES-GCM", length: 256 },
-    true,
-    ["encrypt", "decrypt"]
-  );
-  const keyBase64 = await exportKey(key, "raw");
-  localStorage.setItem("aesKey", keyBase64);
-  return key;
-}
-
-async function encryptMessage(message, key) {
-  const iv = window.crypto.getRandomValues(new Uint8Array(12));
-  const encoder = new TextEncoder();
-  const encodedMessage = encoder.encode(message);
-  const encryptedContent = await window.crypto.subtle.encrypt(
-    { name: "AES-GCM", iv: iv },
-    key,
-    encodedMessage
-  );
-  return {
-    encryptedContent: arrayBufferToBase64(encryptedContent),
-    iv: arrayBufferToBase64(iv),
-  };
-}
-
-async function decryptMessage(encryptedContent, iv, key) {
-  const decryptedContent = await window.crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: base64ToArrayBuffer(iv) },
-    key,
-    base64ToArrayBuffer(encryptedContent)
-  );
-  const decoder = new TextDecoder();
-  return decoder.decode(decryptedContent);
-}
-
-async function importSymmetricKey(keyBase64) {
-  return window.crypto.subtle.importKey(
-    "raw",
-    base64ToArrayBuffer(keyBase64),
-    "AES-GCM",
-    true,
-    ["encrypt", "decrypt"]
-  );
-}
-
-async function exampleUsage() {
-  await generateAndStoreECDSAKeyPair();
-  const symmetricKey = await generateSymmetricKey();
-
-  const message = "Hello, Bob!";
-  const signature = await signMessage(message);
-  console.log("Signature:", signature);
-
-  const { encryptedContent, iv } = await encryptMessage(message, symmetricKey);
-  console.log("Encrypted Message:", encryptedContent);
-
-  const alicePublicKeyBase64 = localStorage.getItem("ecdsaPublicKey");
-  const isValid = await verifyMessage(alicePublicKeyBase64, message, signature);
-  console.log("Is the signature valid?", isValid);
-
-  const aesKeyBase64 = localStorage.getItem("aesKey");
-  const aesKey = await importSymmetricKey(aesKeyBase64);
-  const decryptedMessage = await decryptMessage(encryptedContent, iv, aesKey);
-  console.log("Decrypted Message:", decryptedMessage);
-}
-
-exampleUsage();

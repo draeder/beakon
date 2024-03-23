@@ -1,22 +1,20 @@
 # beakon
-> A P2P WebRTC signaling service using PubNub as the signal server
+> A decentralized WebRTC signaling service
 
 ## Features
 - Partial mesh
 - Self healing
 - Gossip protocol
 - Direct messaging
-- Message buffering
 
 ## Todo features
 - Message encyryption
 - Topic subscriptions
 - Video/Audio
 
-### Partial Mesh
 
 
-### Firebase Preparation
+<!-- ### Firebase Preparation
 1. Install the firebase cli sdk
 2. Create a firebase project with a realtime database
 3. Create a file named `auth.js` inside the `web/public` folder and save your firebase information to that file
@@ -48,13 +46,10 @@ export default {
   	".write": true
   }
 }
-```
+``` -->
 
 ## Local Development
-1. Clone this repo
-2. `npm install`
-3. `node web/server.js`
-4. Navigate to `http://localhost:3000` in multple browser tabs
+
 
 <!-- ## Install
 ### Node (coming soon)
@@ -90,8 +85,23 @@ Initialize Beakon with the passed in options.
 ```
 
 #### Methods
-##### `send(data [[any]])`
+##### `send(data [[any]], address [[string]])`
 Send a broadcast message to all peers in the partial mesh network
+
+##### `beakon.connections()`
+Return the peers in this peer's partial mesh
+
+##### `beakon.on("peer", peer [[object]])`
+Listens for new peer events
+
+The `peer` object has the following properties:
+```js
+peer = {
+  id: "", // "peer id"
+  state: "", // "connected", "disconnected"
+  peer: {}, // the peer instance object
+}
+```
 
 ##### `beakon.on(event [[any]], data [[any]])`
 Listen for custom events
@@ -104,9 +114,6 @@ Emit custom events
 
 ##### `becon.off(event [[any]], data [[any]])`
 Remove custom events
-
-##### `beakon.peers()`
-Return the peers in this peer's partial mesh
 
 #### Events (default)
 ##### `connect`

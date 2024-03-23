@@ -3,46 +3,31 @@
 <head>
 <meta charset="UTF-8">
 <title>Beakon - WebRTC Signaling</title>
-<style>
-  #messages {
-    background-color: #f0f0f0;
-    padding: 10px;
-    margin-top: 20px;
-    height: 300px;
-    overflow-y: scroll;
-    border: 1px solid #ccc;
-  }
-  .message {
-    margin-bottom: 10px;
-  }
-  #sendSection {
-    margin-top: 20px;
-  }
-</style>
 <script type="module">
-  import Beakon from "./index.js"
+  import Beakon from "../index.js"
   import auth from "./auth.js"
   
   const opts = {
     pubnubConfig: auth,
+    simplePeerOpts: {},
     minPeers: 2,
     softCap: 6,
     maxPeers: 9,
     minFanout: 0.33,
     maxFanout: 0.66,
     maxHistory: 10,
-    debug: true
+    debug: true,
   }
   
-  document.addEventListener("DOMContentLoaded", async function() {
+  if (document.readyState === "complete" || document.readyState === "interactive") {
     const beakon = new Beakon(opts);
     
-    // Function to handle sending messages
     function sendMessage() {
+      console.log("Sending...")
       const inputField = document.getElementById('messageInput');
       const message = inputField.value || Math.floor(Math.random() * 1000).toString();
-      beakon.send(message); // Implement this method in Beakon class
-      inputField.value = ''; // Clear input field after sending
+      beakon.send(message);
+      inputField.value = '';
     }
 
     document.getElementById('sendButton').addEventListener('click', sendMessage);
@@ -53,9 +38,10 @@
       }
     });
 
-    beakon.on('peer', (peer) => {
-      console.debug("Peer event:", peer)
-      // do something with Beakon peers
+    beakon.on('peer', peer => {
+      console.log(peer)
+      console.debug("Peer event:", peer.id, peer.state)
+      // peer.connection do something with Beakon peers
     })
 
     beakon.on('data', (data) => {
@@ -74,9 +60,16 @@
       messageElement.classList.add('message');
       messageElement.innerHTML = `<b>${senderName}</b> at ${formattedDate}: ${message}`;
       
-      messageContainer.appendChild(messageElement);
+      // Check if the message container has any child elements
+      if (messageContainer.firstChild) {
+        // If there's at least one message, insert the new message at the top
+        messageContainer.insertBefore(messageElement, messageContainer.firstChild);
+      } else {
+        // If there are no messages, just append the new message
+        messageContainer.appendChild(messageElement);
+      }
     }
-  });
+  };
 </script>
 </head>
 <body>
@@ -87,4 +80,20 @@
   <button id="sendButton">Send</button>
 </div>
 </body>
+<style>
+  #messages {
+    background-color: #f0f0f0;
+    padding: 10px;
+    margin-top: 20px;
+    height: 300px;
+    overflow-y: scroll;
+    border: 1px solid #ccc;
+  }
+  .message {
+    margin-bottom: 10px;
+  }
+  #sendSection {
+    margin-top: 20px;
+  }
+</style>
 </html>

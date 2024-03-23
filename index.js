@@ -1,145 +1,101 @@
-import SimplePeer from "https://jspm.dev/simple-peer";
-import PubNub from "https://jspm.dev/pubnub";
+let SimplePeer, PubNub;
 
-class EventEmitter {
-  constructor() {
-    this.events = {};
-  }
+const isBrowser =
+  typeof window !== "undefined" && typeof window.document !== "undefined";
 
-  on = (event, listener) => {
-    if (!this.events[event]) {
-      this.events[event] = [];
-    }
-    this.events[event].push(listener);
-  };
-
-  once = (event, listener) => {
-    const onceWrapper = (...args) => {
-      this.off(event, onceWrapper);
-      listener(...args);
-    };
-    onceWrapper.originalListener = listener;
-
-    this.on(event, onceWrapper);
-  };
-
-  off = (event, listener) => {
-    if (!this.events[event]) {
-      return;
-    }
-    this.events[event] = this.events[event].filter(
-      (l) => l !== listener && l.originalListener !== listener
-    );
-  };
-
-  emit = (event, ...args) => {
-    if (!this.events[event]) {
-      return;
-    }
-    const listeners = [...this.events[event]];
-    listeners.forEach((listener) => {
-      listener(...args);
-    });
-  };
+if (isBrowser) {
+  SimplePeer = (await import("https://jspm.dev/simple-peer")).default;
+  PubNub = (await import("https://jspm.dev/pubnub")).default;
+} else {
+  SimplePeer = (await import("simple-peer")).default;
+  PubNub = (await import("pubnub")).default;
 }
-
-async function generateAndStoreKeyPair() {
-  const keyPair = await window.crypto.subtle.generateKey(
-    {
-      name: "RSA-OAEP",
-      modulusLength: 2048,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: { name: "SHA-256" },
-    },
-    true,
-    ["encrypt", "decrypt"]
-  );
-
-  const publicKeyBase64 = await exportKey(keyPair.publicKey, "spki");
-  const privateKeyBase64 = await exportKey(keyPair.privateKey, "pkcs8");
-
-  localStorage.setItem("beakon-pubkey", publicKeyBase64);
-  localStorage.setItem("beakon-privkey", privateKeyBase64);
-}
-
-async function exportKey(key, format) {
-  const exportedKey = await window.crypto.subtle.exportKey(format, key);
-  return arrayBufferToBase64(exportedKey);
-}
-
-function arrayBufferToBase64(buffer) {
-  let binary = "";
-  const bytes = new Uint8Array(buffer);
-  const len = bytes.byteLength;
-  for (let i = 0; i < len; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return window.btoa(binary);
-}
-
-function base64ToArrayBuffer(base64) {
-  const binaryString = window.atob(base64);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes.buffer;
-}
-
-async function importPublicKey(base64Key) {
-  const keyBuffer = base64ToArrayBuffer(base64Key);
-  return window.crypto.subtle.importKey(
-    "spki",
-    keyBuffer,
-    {
-      name: "RSA-OAEP",
-      hash: { name: "SHA-256" },
-    },
-    true,
-    ["encrypt"]
-  );
-}
-
-async function importPrivateKey(base64Key) {
-  const keyBuffer = base64ToArrayBuffer(base64Key);
-  return window.crypto.subtle.importKey(
-    "pkcs8",
-    keyBuffer,
-    {
-      name: "RSA-OAEP",
-      hash: { name: "SHA-256" },
-    },
-    true,
-    ["decrypt"]
-  );
-}
-
-generateAndStoreKeyPair();
 
 class Beakon {
   constructor(opts) {
+    const emitter = new EventEmitter();
+
+    this.on = (event, listener) => emitter.on(event, listener);
+    this.once = (event, listener) => emitter.once(event, listener);
+    this.off = (event, listener) => emitter.off(event, listener);
+    this.emit = (event, data) => emitter.emit(event, data);
+
+    this.opts = opts;
+    if (!isBrowser && !opts.simplePeerOpts.wrtc)
+      return console.error(
+        "Error: opts.simplePeerOpts.wrtc is required for node.js instances."
+      );
     this.pubnub = new PubNub(opts.pubnubConfig);
     this.peers = new Set();
-    this.opts = opts;
     this.seenGossipIds = new Set();
     this.seenMessageIds = new Set();
     this.seenMessages = [];
+    this.last = "";
+    this.simplePeerOpts = opts.simplePeerOpts;
     this.init();
-    window.beakon = this;
+    if (isBrowser) window.beakon = this;
   }
 
   async init() {
+    this.lastGossipID = "";
     this.peerId = this.opts.peerId || (await this.generateRandomSHA1Hash());
     console.log("This peer ID", this.peerId);
+
     this.setupListeners();
     this.announcePresence();
+
+    if (!isBrowser) {
+      process.on("exit", (code) => {
+        console.log(`About to exit with code: ${code}`);
+        this.send({ type: "exit", content: "peer exit . . ." });
+      });
+
+      process.on("uncaughtException", async (error) => {
+        console.error("Unhandled exception:", error);
+        await this.send({ type: "exit", content: "peer exit . . ." });
+        process.exit(1); // Exit with a failure code
+      });
+
+      process.on("unhandledRejection", async (reason, promise) => {
+        console.error("Unhandled rejection at:", promise, "reason:", reason);
+        process.exit(1); // It's a good practice to exit after handling the rejection
+        await this.send({ type: "exit", content: "peer exit . . ." });
+      });
+
+      process.on("SIGINT", async () => {
+        console.log("Received SIGINT. Perform cleanup.");
+        await this.send({ type: "exit", content: "peer exit . . ." });
+        process.exit(0);
+      });
+
+      process.on("SIGTERM", async () => {
+        console.log("Received SIGTERM. Perform cleanup.");
+        await this.send({ type: "exit", content: "peer exit . . ." });
+        process.exit(0);
+      });
+    }
   }
 
   async generateRandomSHA1Hash() {
     const array = new Uint8Array(20);
-    window.crypto.getRandomValues(array);
-    const hashBuffer = await crypto.subtle.digest("SHA-1", array);
+    let hashBuffer;
+
+    if (isBrowser) {
+      window.crypto.getRandomValues(array);
+      hashBuffer = await window.crypto.subtle.digest("SHA-1", array);
+    } else {
+      const dotenv = await import("dotenv");
+      dotenv.config();
+
+      const crypto = await import("crypto");
+      crypto.randomFillSync(array);
+      const hash = crypto.createHash("sha1");
+      hash.update(array);
+      // For Node.js, the hash.digest() returns a Buffer, so we directly use it
+      return hash.digest("hex");
+    }
+
+    // This part is for browsers, as Node.js uses the return inside the else block
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
   }
@@ -196,16 +152,19 @@ class Beakon {
   }
 
   handleSignal(peerId, signal) {
-    // This is executed by an existing peer when it receives a signal via PubNub
     if (!this.peers[peerId]) {
-      this.createPeer(peerId, false); // false indicating this peer is not the initiator
+      this.createPeer(peerId, false);
     }
-    // Direct signaling through the P2P connection if it exists
     if (this.peers[peerId]) {
+      if (this.opts.debug === true)
+        console.debug("DEBUG:", "Using existing P2P network for signaling");
       this.peers[peerId].signal(signal);
     } else {
-      // If for some reason the P2P connection doesn't exist, log an error or handle accordingly
-      console.error("Failed to relay signal over P2P network; peer not found.");
+      if (this.opts.debug === true)
+        console.debug(
+          "DEBUG:",
+          "Failed to relay signal over P2P network; peer not found."
+        );
     }
   }
 
@@ -222,11 +181,9 @@ class Beakon {
   }
 
   relaySignal(targetPeerId, signal) {
-    // Example: Relay signal to all connected peers
     Object.keys(this.peers).forEach((peerId) => {
       const peer = this.peers[peerId];
       if (peer && peer.connected) {
-        // Send a signaling message through the peer data channel
         peer.send(
           JSON.stringify({
             type: "relay-signal",
@@ -255,8 +212,15 @@ class Beakon {
       return;
     }
     if (this.opts.debug === true)
-      console.debug("DEBUG: Creating peer...", { initiator, peerId });
-    const peer = new SimplePeer({ initiator, trickle: true });
+      console.debug("DEBUG: Creating peer...", {
+        initiator,
+        peerId,
+      });
+    const peer = new SimplePeer({
+      initiator,
+      trickle: true,
+      wrtc: this.opts.simplePeerOpts.wrtc,
+    });
 
     peer.on("signal", (signal) => {
       this.pubnub.publish({
@@ -272,20 +236,23 @@ class Beakon {
 
     peer.on("connect", () => {
       if (this.opts.debug) console.debug(`DEBUG: Connected to peer: ${peerId}`);
-      this.seenMessages.forEach((message) => {
-        console.debug("DEBUG: Trying to send history.", message);
-        setTimeout(() => {
-          this.send(message);
-        }, 150);
-      });
+
+      this.emit("peer", { id: peerId, state: "connected", connection: peer });
+
+      if (this.seenMessages.length > 0)
+        this.seenMessages.forEach((message) => {
+          if (this.opts.debug === true)
+            console.debug("DEBUG: Trying to send history.", message);
+          setTimeout(() => this.send(message, message.to), 150);
+        });
     });
 
-    let last;
+    // let last;
     peer.on("data", (data) => {
-      if (last === data) return;
+      // if (last === data) return;
       let parsedData;
       try {
-        last = data;
+        // last = data;
         parsedData = JSON.parse(data);
         if (this.opts.debug === true) console.debug("DEBUG:", parsedData);
         if (parsedData.to && parsedData.to !== this.peerId) return;
@@ -299,37 +266,37 @@ class Beakon {
         }
         this.addSeenMessage(parsedData);
         this.seenMessageIds.add(parsedData.messageId);
-        console.log(`Data from ${parsedData.senderId}:`, parsedData);
+        // console.log(`Data from ${parsedData.senderId}:`, parsedData);
 
-        this.send(parsedData);
+        this.send(parsedData, parsedData.to);
       } catch (error) {
         console.error(`Error parsing data from ${peerId}:`, error);
       }
-      // Add handling for relayed signaling messages
       if (
         parsedData.type === "relay-signal" &&
         parsedData.target === this.peerId
       ) {
-        // If this peer is the target, process the relayed signal
         this.handleSignal(parsedData.sender, parsedData.signal);
       }
     });
 
     peer.on("close", () => {
-      console.debug(`Disconnected from peer: ${peerId}`);
+      if (this.opts.debug === true)
+        console.debug(`Disconnected from peer: ${peerId}`);
+      this.emit("peer", { peerId, state: "disconnected" });
       delete this.peers[peerId];
       const peerCount = Object.keys(this.peers).length;
       if (this.opts.debug === true)
-        console.debug("Peers in partial mesh:", peerCount);
-      if (peerCount <= 1) this.reinitialize();
+        console.debug("DEBUG: Peers in partial mesh:", peerCount);
+      // if (peerCount <= 1) this.reinitialize();
     });
 
     peer.on("error", (error) => {
       if (error.reason === "Close called") return;
       const peerCount = Object.keys(this.peers).length;
       if (this.opts.debug === true)
-        console.debug(`Error with peer ${peerId}:`, error);
-      if (peerCount <= 1) this.reinitialize();
+        console.debug(`DEBUG: Error with peer ${peerId}:`, error);
+      // if (peerCount <= 1) this.reinitialize();
     });
 
     this.peers[peerId] = peer;
@@ -341,30 +308,44 @@ class Beakon {
       this.seenMessages.shift();
   }
 
-  async send(data, targetPeerIds = null, retries = 0) {
+  async send(data, to, type, retries = 0) {
+    // stagger messages to avoid race conditions
+    const randomDelay = Math.floor(Math.random() * 10);
+    await delay(randomDelay);
+
+    if (this.last === data) return;
     let gossipId = !data.gossipId
       ? await this.generateRandomSHA1Hash()
       : data.gossipId;
+    let messageId = data.messageId
+      ? data.messageId
+      : await this.generateRandomSHA1Hash();
 
-    if (this.seenGossipIds.has(gossipId) && retries === 0) return;
+    if (this.lastGossipID === data.gossipId) return;
+    this.lastGossipID = data.gossipId;
+
+    let targetPeerIds = to;
+    if (this.seenGossipIds.has(gossipId)) return; // && retries === 0) return;
     this.seenGossipIds.add(gossipId);
 
     let message = {
-      messageId: data.messageId
-        ? data.messageId
-        : await this.generateRandomSHA1Hash(),
+      messageId: messageId,
       senderId: data.senderId ? data.senderId : this.peerId,
       gossiperId: this.peerId,
       date: data.date ? data.date : new Date().getTime(),
       gossipId: gossipId,
       to: targetPeerIds,
+      type: type,
       content: typeof data === "object" ? data.content : data,
     };
 
+    if (!this.seenMessages.includes(message) && !isBrowser)
+      this.emit("data", message);
     this.addSeenMessage(message);
 
     let peersToSend = this.selectPeersToSend(data, targetPeerIds);
-    if (peersToSend.length < 1) peersToSend = Object.keys(this.peers);
+    if (peersToSend.length < this.minPeers)
+      peersToSend = Object.keys(this.peers);
 
     if (this.opts.debug) console.debug("DEBUG: Gossiping to:", peersToSend);
 
@@ -372,54 +353,59 @@ class Beakon {
       try {
         this.peers[peerId].send(JSON.stringify(message));
       } catch (error) {
-        console.debug(
-          `Error sending to peer. ${peerId} is no longer connected.`
-        );
+        if (this.opts.debug === true)
+          console.debug(
+            `Error sending to peer. ${peerId} is no longer connected.`
+          );
         delete this.peers[peerId];
-
-        if (retries < 3) {
-          if (this.opts.debug)
-            console.debug(
-              `DEBUG: Retrying message send (attempt ${retries + 1})`
-            );
-          await this.send(data, null, retries + 1);
-          break;
-        }
+        setTimeout(async () => {
+          await this.send(data, targetPeerIds);
+        }, 150);
       }
     }
+    this.last === data;
   }
 
   selectPeersToSend(data, targetPeerIds) {
     const peerKeys = Object.keys(this.peers);
     let filteredPeerIds = targetPeerIds
       ? peerKeys.filter(
-          (peerId) => targetPeerIds.includes(peerId) && peerId !== this.peerId
+          (peerId) =>
+            targetPeerIds.includes(peerId) &&
+            peerId !== this.peerId &&
+            peerId !== data.senderId
         )
       : peerKeys.filter(
-          (peerId) => peerId !== this.peerId && peerId !== data.gossiperId
+          (peerId) =>
+            peerId !== this.peerId &&
+            peerId !== data.gossiperId &&
+            peerId !== data.senderId
         );
-
-    if (!targetPeerIds && this.opts.fanoutRatio) {
-      const fanoutCount = Math.ceil(
-        filteredPeerIds.length * this.opts.fanoutRatio
-      );
-      filteredPeerIds = this.shuffleArray(filteredPeerIds).slice(
-        0,
-        fanoutCount
-      );
-    }
 
     if (filteredPeerIds.length < this.opts.minPeers) {
       const additionalPeersNeeded = this.opts.minPeers - filteredPeerIds.length;
       const availablePeers = peerKeys.filter(
         (peerId) => !filteredPeerIds.includes(peerId) && peerId !== this.peerId
       );
-      // Shuffle to randomize selection and then take as many as needed
       const additionalPeers = this.shuffleArray(availablePeers).slice(
         0,
         additionalPeersNeeded
       );
       filteredPeerIds = filteredPeerIds.concat(additionalPeers);
+    }
+
+    if (!targetPeerIds) {
+      const dynamicFanoutRatio =
+        this.opts.minFanout +
+        Math.random() * (this.opts.maxFanout - this.opts.minFanout);
+
+      const fanoutCount = Math.ceil(
+        filteredPeerIds.length * dynamicFanoutRatio
+      );
+      filteredPeerIds = this.shuffleArray(filteredPeerIds).slice(
+        0,
+        fanoutCount
+      );
     }
 
     return filteredPeerIds;
@@ -433,20 +419,66 @@ class Beakon {
     return array;
   }
 
-  async reinitialize() {
-    setTimeout(async () => {
-      if (this.opts.debug) console.debug("Reinitializing beakon . . . ");
-      await this.destroy();
-      let opts = this.opts;
-      window.beakon = null;
-      new Beakon(opts);
-    }, 5000);
-  }
+  // async reinitialize() {
+  //   setTimeout(async () => {
+  //     if (this.opts.debug) console.debug("Reinitializing beakon . . . ");
+  //     await this.destroy();
+  //     let opts = this.opts;
+  //     if (isBrowser) window.beakon = null;
+  //     new Beakon(opts);
+  //   }, 5000);
+  // }
 
-  async destroy() {
-    await this.pubnub.unsubscribeAll();
-    await Promise.all(Object.values(this.peers).map((peer) => peer.destroy()));
-  }
+  // async destroy() {
+  //   await this.pubnub.unsubscribeAll();
+  //   await Promise.all(Object.values(this.peers).map((peer) => peer.destroy()));
+  // }
 }
 
 export default Beakon;
+
+/* Utilities */
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+class EventEmitter {
+  constructor() {
+    this.events = {};
+  }
+
+  on = (event, listener) => {
+    if (!this.events[event]) {
+      this.events[event] = [];
+    }
+    this.events[event].push(listener);
+  };
+
+  once = (event, listener) => {
+    const onceWrapper = (...args) => {
+      this.off(event, onceWrapper);
+      listener(...args);
+    };
+    onceWrapper.originalListener = listener;
+
+    this.on(event, onceWrapper);
+  };
+
+  off = (event, listener) => {
+    if (!this.events[event]) {
+      return;
+    }
+    this.events[event] = this.events[event].filter(
+      (l) => l !== listener && l.originalListener !== listener
+    );
+  };
+
+  emit = (event, ...args) => {
+    if (!this.events[event]) {
+      return;
+    }
+    const listeners = [...this.events[event]];
+    listeners.forEach((listener) => {
+      listener(...args);
+    });
+  };
+}
