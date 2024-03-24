@@ -124,8 +124,8 @@ Listen for peer connection events
 ##### `disconnect`
 Listen for peer disconnection events
 
-##### `message`
-Listen for messages
+##### `data`
+Listen for data
 
 ##### `DEBUG`
 Listen for debug events

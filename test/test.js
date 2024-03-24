@@ -33,6 +33,12 @@ describe("Beakon Networking", function () {
       });
 
       beakon.on("data", (data) => {
+        try {
+          if (messagesReceived[n].has(data.content))
+            throw new Error("Already has!");
+        } catch (error) {
+          console.log(error);
+        }
         messagesReceived[n].add(data.content);
       });
 

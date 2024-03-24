@@ -345,7 +345,7 @@ class Beakon {
       this.emit("data", message);
     this.addSeenMessage(message);
 
-    let peersToSend = this.selectPeersToSend(data, targetPeerIds);
+    let peersToSend = this.selectPeersToSend(data, Object.keys(this.peers));
     if (peersToSend.length < this.minPeers)
       peersToSend = Object.keys(this.peers);
 
@@ -363,6 +363,7 @@ class Beakon {
         await this.send(data, targetPeerIds);
       }
     }
+
     this.last === data;
   }
 
@@ -413,7 +414,7 @@ class Beakon {
 
   shuffleArray(array) {
     for (let i = array.length - 1; i > 0; i--) {
-      const j = Math.ceil(Math.random() * (i + 1));
+      const j = Math.floor(Math.random() * (i + 1));
       [array[i], array[j]] = [array[j], array[i]];
     }
     return array;
