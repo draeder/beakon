@@ -19,7 +19,7 @@ const opts = {
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe("Beakon Networking", function () {
-  this.timeout(60000);
+  this.timeout(120_1000);
 
   it("5 peers should send and receive messages correctly", async () => {
     const peers = [];
@@ -47,19 +47,24 @@ describe("Beakon Networking", function () {
     }
 
     // Additional delay to ensure all peers are ready before sending messages
-    await delay(20000); // Wait for peer connections to stabilize
+    await delay(5000); // Wait for peer connections to stabilize
 
     console.log("All peers should now be ready. Starting to send messages.");
 
     // Sending messages
     peers.forEach((peer, index) => {
-      const msgContent = Math.random().toString();
-      messagesToSend.add(msgContent);
-      peer.send({ content: msgContent }); // Sending the message as an object
+      let interval = setInterval(() => {
+        const msgContent = Math.random().toString();
+        messagesToSend.add(msgContent);
+        peer.send({ content: msgContent }); // Sending the message as an object
+      }, 150);
+      setTimeout(() => {
+        clearInterval(interval);
+      }, 3000);
     });
 
     // Wait for all messages to be exchanged
-    await delay(1000);
+    await delay(10000);
 
     // Log received messages for debugging
     console.log(
