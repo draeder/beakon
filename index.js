@@ -37,43 +37,11 @@ class Beakon {
   }
 
   async init() {
-    this.lastGossipID = "";
     this.peerId = this.opts.peerId || (await this.generateRandomSHA1Hash());
     console.log("This peer ID", this.peerId);
 
     this.setupListeners();
     this.announcePresence();
-
-    if (!isBrowser) {
-      process.on("exit", (code) => {
-        console.log(`About to exit with code: ${code}`);
-        this.send({ type: "exit", content: "peer exit . . ." });
-      });
-
-      process.on("uncaughtException", async (error) => {
-        console.error("Unhandled exception:", error);
-        await this.send({ type: "exit", content: "peer exit . . ." });
-        process.exit(1); // Exit with a failure code
-      });
-
-      process.on("unhandledRejection", async (reason, promise) => {
-        console.error("Unhandled rejection at:", promise, "reason:", reason);
-        process.exit(1); // It's a good practice to exit after handling the rejection
-        await this.send({ type: "exit", content: "peer exit . . ." });
-      });
-
-      process.on("SIGINT", async () => {
-        console.log("Received SIGINT. Perform cleanup.");
-        await this.send({ type: "exit", content: "peer exit . . ." });
-        process.exit(0);
-      });
-
-      process.on("SIGTERM", async () => {
-        console.log("Received SIGTERM. Perform cleanup.");
-        await this.send({ type: "exit", content: "peer exit . . ." });
-        process.exit(0);
-      });
-    }
   }
 
   async generateRandomSHA1Hash() {
@@ -283,7 +251,7 @@ class Beakon {
     peer.on("close", () => {
       if (this.opts.debug === true)
         console.debug(`Disconnected from peer: ${peerId}`);
-      this.emit("peer", { peerId, state: "disconnected" });
+      this.emit("peer", { id: peerId, state: "disconnected" });
       delete this.peers[peerId];
       const peerCount = Object.keys(this.peers).length;
       if (this.opts.debug === true)
@@ -308,44 +276,33 @@ class Beakon {
       this.seenMessages.shift();
   }
 
-  async send(data, to, type, retries = 0) {
-    // stagger messages to avoid race conditions
-    const randomDelay = Math.floor(Math.random() * 50);
-    await delay(randomDelay);
-
+  async send(data, to, type = null, retries = 0) {
     if (this.last === data) return;
     let gossipId = !data.gossipId
       ? await this.generateRandomSHA1Hash()
       : data.gossipId;
-    let messageId = data.messageId
-      ? data.messageId
-      : await this.generateRandomSHA1Hash();
-
-    let date = data.date ? data.date : new Date().getTime();
-
-    if (this.lastGossipID === data.gossipId) return;
-    this.lastGossipID = data.gossipId;
 
     let targetPeerIds = to;
-    if (this.seenGossipIds.has(gossipId)) return; // && retries === 0) return;
+    if (this.seenGossipIds.has(gossipId) && retries === 0) return;
     this.seenGossipIds.add(gossipId);
 
     let message = {
-      messageId: messageId,
+      messageId: data.messageId
+        ? data.messageId
+        : await this.generateRandomSHA1Hash(),
       senderId: data.senderId ? data.senderId : this.peerId,
       gossiperId: this.peerId,
-      date: date,
+      date: data.date ? data.date : new Date().getTime(),
       gossipId: gossipId,
       to: targetPeerIds,
       type: type,
       content: typeof data === "object" ? data.content : data,
     };
 
-    if (!this.seenMessages.includes(message) && !isBrowser)
-      this.emit("data", message);
+    if (!this.seenMessages.includes(message)) this.emit("data", message);
     this.addSeenMessage(message);
 
-    let peersToSend = this.selectPeersToSend(data, Object.keys(this.peers));
+    let peersToSend = this.selectPeersToSend(data, targetPeerIds);
     if (peersToSend.length < this.minPeers)
       peersToSend = Object.keys(this.peers);
 
@@ -363,7 +320,6 @@ class Beakon {
         await this.send(data, targetPeerIds);
       }
     }
-
     this.last === data;
   }
 
@@ -414,7 +370,7 @@ class Beakon {
 
   shuffleArray(array) {
     for (let i = array.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
+      const j = Math.ceil(Math.random() * (i + 1));
       [array[i], array[j]] = [array[j], array[i]];
     }
     return array;
@@ -437,10 +393,6 @@ class Beakon {
 }
 
 export default Beakon;
-
-/* Utilities */
-
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 class EventEmitter {
   constructor() {

@@ -1,4 +1,6 @@
 test2.*
+backup
+*.bak
 
 *.firebaserc
 firebase

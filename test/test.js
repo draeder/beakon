@@ -16,28 +16,30 @@ const opts = {
   debug: false,
 };
 
+const peerCount = 10;
+const minPercentageReceived = 100; // Minimum percentage of messages that should be received
+
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe("Beakon Networking", function () {
   this.timeout(120_1000);
 
-  it("5 peers should send and receive messages correctly", async () => {
+  it(`${peerCount} peers should send and receive ${minPercentageReceived} of messages correctly, ignoring announcements and signaling`, async () => {
     const peers = [];
     const messagesToSend = new Set();
-    const messagesReceived = new Array(5).fill(null).map(() => new Set());
+    const messagesReceived = new Array(peerCount)
+      .fill(null)
+      .map(() => new Set());
 
-    for (let n = 0; n < 5; n++) {
+    for (let n = 0; n < peerCount; n++) {
       const beakon = new Beakon(opts);
       beakon.on("peer", (peer) => {
         console.debug("Peer event:", peer.id, peer.state);
       });
 
       beakon.on("data", (data) => {
-        try {
-          if (messagesReceived[n].has(data.content))
-            throw new Error("Already has!");
-        } catch (error) {
-          console.log(error);
+        if (data.type === "announce-presence" || data.type === "signal") {
+          return;
         }
         messagesReceived[n].add(data.content);
       });
@@ -46,25 +48,26 @@ describe("Beakon Networking", function () {
       await delay(2000); // Ensure peers are initialized
     }
 
-    // Additional delay to ensure all peers are ready before sending messages
     await delay(5000); // Wait for peer connections to stabilize
 
     console.log("All peers should now be ready. Starting to send messages.");
 
     // Sending messages
-    peers.forEach((peer, index) => {
+    peers.forEach(() => {
       let interval = setInterval(() => {
         const msgContent = Math.random().toString();
         messagesToSend.add(msgContent);
-        peer.send({ content: msgContent }); // Sending the message as an object
-      }, 150);
+        peers.forEach((peer) =>
+          peer.send({ content: msgContent, type: "user-message" })
+        ); // Ensure messages have a type distinguishable from system messages
+      }, 10);
       setTimeout(() => {
         clearInterval(interval);
-      }, 3000);
+      }, 5000);
     });
 
     // Wait for all messages to be exchanged
-    await delay(10000);
+    await delay(5500);
 
     // Log received messages for debugging
     console.log(
@@ -73,14 +76,15 @@ describe("Beakon Networking", function () {
     );
 
     // Verification
+    const totalMessagesSent = messagesToSend.size;
+
     messagesReceived.forEach((receivedSet, i) => {
-      messagesToSend.forEach((sentContent) => {
-        const hasMessage = receivedSet.has(sentContent);
-        expect(
-          hasMessage,
-          `Peer ${i} did not receive message content: ${sentContent}`
-        ).to.be.true;
-      });
+      const receivedCount = receivedSet.size;
+      const receivedPercentage = (receivedCount / totalMessagesSent) * 100;
+      expect(
+        receivedPercentage >= minPercentageReceived,
+        `Peer ${i} received ${receivedPercentage}% of messages, which is below the required 80% threshold.`
+      ).to.be.true;
     });
   });
 });

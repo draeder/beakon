@@ -51,16 +51,153 @@ export default {
 ## Local Development
 
 
-<!-- ## Install
-### Node (coming soon)
+## Install
+### Node
 ```
 npm install beakon
 ```
+#### Example
+```js
+import Beakon from "./index.js";
+import auth from "./pubnub/auth.js";
 
-### Browser (coming soon)
+import wrtc from "wrtc";
+
+const opts = {
+  pubnubConfig: auth,
+  simplePeerOpts: { wrtc: wrtc },
+  minPeers: 2,
+  softCap: 6,
+  maxPeers: 9,
+  minFanout: 0.33,
+  maxFanout: 0.66,
+  maxHistory: 10,
+  debug: false,
+};
+
+const beakon = new Beakon(opts);
+
+beakon.on("peer", (peer) => {
+  console.debug("Peer event:", peer.id, peer.state);
+  // peer.connection do something with Beakon peer
+});
+
+beakon.on("data", (data) => {
+  console.log(data.senderId, data.content);
+});
+
+process.stdin.on("data", (data) => {
+  beakon.send(data.toString().trim());
+});
+```
+
+### Browser (CDN coming soon)
 ```html
 <script type="module" src=""></script>
-``` -->
+```
+
+#### Example
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Beakon - WebRTC Signaling</title>
+<script type="module">
+  import Beakon from "./index.js"
+  import auth from "./auth.js"
+  
+  const opts = {
+    pubnubConfig: auth,
+    simplePeerOpts: {},
+    minPeers: 2,
+    softCap: 6,
+    maxPeers: 9,
+    minFanout: 0.33,
+    maxFanout: 0.66,
+    maxHistory: 10,
+    debug: true,
+  }
+  
+  if (document.readyState === "complete" || document.readyState === "interactive") {
+    const beakon = new Beakon(opts);
+    
+    function sendMessage() {
+      console.log("Sending...")
+      const inputField = document.getElementById('messageInput');
+      const message = inputField.value || Math.floor(Math.random() * 1000).toString();
+      beakon.send(message);
+      inputField.value = '';
+    }
+
+    document.getElementById('sendButton').addEventListener('click', sendMessage);
+    
+    document.getElementById('messageInput').addEventListener('keypress', (event) => {
+      if (event.key === 'Enter') {
+        sendMessage();
+      }
+    });
+
+    beakon.on('peer', peer => {
+      console.log(peer)
+      console.debug("Peer event:", peer.id, peer.state)
+      // peer.connection do something with Beakon peers
+    })
+
+    beakon.on('data', (data) => {
+      displayMessage(data.senderId, data.content, data.date);
+    });
+
+    function displayMessage(senderId, message, timestamp) {
+      const messageContainer = document.getElementById('messages');
+      
+      const date = new Date(timestamp);
+      const formattedDate = date.getTime();
+      
+      const senderName = (senderId === beakon.peerId) ? 'You' : senderId;
+      
+      const messageElement = document.createElement('div');
+      messageElement.classList.add('message');
+      messageElement.innerHTML = `<b>${senderName}</b> at ${formattedDate}: ${message}`;
+      
+      // Check if the message container has any child elements
+      if (messageContainer.firstChild) {
+        // If there's at least one message, insert the new message at the top
+        messageContainer.insertBefore(messageElement, messageContainer.firstChild);
+      } else {
+        // If there are no messages, just append the new message
+        messageContainer.appendChild(messageElement);
+      }
+    }
+  };
+</script>
+</head>
+<body>
+<h2>Beakon - WebRTC Signaling</h2>
+<div id="messages"></div>
+<div id="sendSection">
+  <input type="text" id="messageInput" placeholder="Enter message or send a random number"/>
+  <button id="sendButton">Send</button>
+</div>
+</body>
+<style>
+  #messages {
+    background-color: #f0f0f0;
+    padding: 10px;
+    margin-top: 20px;
+    height: 300px;
+    overflow-y: scroll;
+    border: 1px solid #ccc;
+  }
+  .message {
+    margin-bottom: 10px;
+  }
+  #sendSection {
+    margin-top: 20px;
+  }
+</style>
+</html>
+```
 
 ### Usage
 #### Initialization

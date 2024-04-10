@@ -1,6 +1,6 @@
 {
   "name": "beakon",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "A decentralized WebRTC signaling service",
   "main": "index.js",
   "type": "module",
@@ -22,7 +22,9 @@
     "url": "https://github.com/draeder/beakon/issues"
   },
   "homepage": "https://github.com/draeder/beakon#readme",
-  "presets": ["@babel/preset-env"],
+  "presets": [
+    "@babel/preset-env"
+  ],
   "devDependencies": {
     "@babel/core": "^7.24.3",
     "@babel/preset-env": "^7.24.3",
