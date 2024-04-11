@@ -104,7 +104,9 @@ process.stdin.on("data", (data) => {
 <meta charset="UTF-8">
 <title>Beakon - WebRTC Signaling</title>
 <script type="module">
-  import Beakon from "./index.js"
+  // import Beakon from "../index.js" // project root
+  // import Beakon from "./index.js" // this folder
+  import Beakon from "https://cdn.jsdelivr.net/npm/beakon/index.js" // cdn
   import auth from "./auth.js"
   
   const opts = {

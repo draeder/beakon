@@ -24,7 +24,7 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 describe("Beakon Networking", function () {
   this.timeout(120_1000);
 
-  it(`${peerCount} peers should send and receive ${minPercentageReceived} of messages correctly, ignoring announcements and signaling`, async () => {
+  it(`${peerCount} peers should send and receive ${minPercentageReceived}% of messages correctly, ignoring announcements and signaling`, async () => {
     const peers = [];
     const messagesToSend = new Set();
     const messagesReceived = new Array(peerCount)
@@ -40,7 +40,7 @@ describe("Beakon Networking", function () {
       beakon.on("data", (data) => {
         if (data.type === "announce-presence" || data.type === "signal") {
           return;
-        }
+        } else console.log(data);
         messagesReceived[n].add(data.content);
       });
 
@@ -53,7 +53,7 @@ describe("Beakon Networking", function () {
     console.log("All peers should now be ready. Starting to send messages.");
 
     // Sending messages
-    peers.forEach(() => {
+    peers.forEach((peer) => {
       let interval = setInterval(() => {
         const msgContent = Math.random().toString();
         messagesToSend.add(msgContent);

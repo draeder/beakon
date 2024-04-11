@@ -30,6 +30,7 @@ class Beakon {
     this.seenGossipIds = new Set();
     this.seenMessageIds = new Set();
     this.seenMessages = [];
+    this.seen = new Set();
     this.last = "";
     this.simplePeerOpts = opts.simplePeerOpts;
     this.init();
@@ -232,6 +233,7 @@ class Beakon {
             console.debug("DEBUG: Already seen message . . .");
           return;
         }
+        if (this.seenMessageIds.has(parsedData.gossipId)) return;
         this.addSeenMessage(parsedData);
         this.seenMessageIds.add(parsedData.messageId);
         // console.log(`Data from ${parsedData.senderId}:`, parsedData);
@@ -271,9 +273,11 @@ class Beakon {
   }
 
   addSeenMessage(message) {
-    if (!this.seenMessages.includes(message)) this.seenMessages.push(message);
-    if (this.seenMessages.length > this.opts.maxHistory)
-      this.seenMessages.shift();
+    for (let msg in this.seenMessages) {
+      if (message.gossipId !== msg.gossipId) this.seenMessages.push(message);
+      if (this.seenMessages.length > this.opts.maxHistory)
+        this.seenMessages.shift();
+    }
   }
 
   async send(data, to, type = null, retries = 0) {
