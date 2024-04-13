@@ -75,13 +75,15 @@ class Beakon {
 
   setupListeners() {
     this.pubnub.addListener({
-      message: (message) => {
+      message: async (message) => {
+        // console.log(Object.keys(this.peers).length);
+        // if (Object.keys(this.peers).length > 1) return;
         const { sender, data, type, target } = message.message;
         if (sender === this.peerId) return;
         if (target && target !== this.peerId) return;
 
         if (this.opts.debug === true)
-          console.debug("DEBUG: Received signal:", message);
+          console.debug("DEBUG: Received message from pubnub:", message);
         switch (type) {
           case "announce-presence":
             this.handleNewPeer(sender);
@@ -96,27 +98,41 @@ class Beakon {
   }
 
   announcePresence() {
-    this.pubnub.publish({
+    let message = {
       channel: "peersChannel",
       message: {
         sender: this.peerId,
         type: "announce-presence",
       },
-    });
+    };
+    try {
+      this.pubnub.publish(message);
+    } catch {
+      setTimeout(() => {
+        this.pubnub.publish(message);
+      }, 150);
+    }
   }
 
   handleNewPeer(peerId) {
     if (!this.peers[peerId]) {
       this.createPeer(peerId, true);
     } else {
-      this.pubnub.publish({
+      let message = {
         channel: "peersChannel",
         message: {
           sender: this.peerId,
           type: "announce-connection",
           target: peerId,
         },
-      });
+      };
+      try {
+        this.pubnub.publish(message);
+      } catch {
+        setTimeout(() => {
+          this.pubnub.publish(message);
+        }, 150);
+      }
     }
   }
 
@@ -124,44 +140,7 @@ class Beakon {
     if (!this.peers[peerId]) {
       this.createPeer(peerId, false);
     }
-    if (this.peers[peerId]) {
-      if (this.opts.debug === true)
-        console.debug("DEBUG:", "Using existing P2P network for signaling");
-      this.peers[peerId].signal(signal);
-    } else {
-      if (this.opts.debug === true)
-        console.debug(
-          "DEBUG:",
-          "Failed to relay signal over P2P network; peer not found."
-        );
-    }
-  }
-
-  signalThroughPubNub(peerId, signal) {
-    this.pubnub.publish({
-      channel: "peersChannel",
-      message: {
-        sender: this.peerId,
-        type: "signal",
-        data: JSON.stringify(signal),
-        target: peerId,
-      },
-    });
-  }
-
-  relaySignal(targetPeerId, signal) {
-    Object.keys(this.peers).forEach((peerId) => {
-      const peer = this.peers[peerId];
-      if (peer && peer.connected) {
-        peer.send(
-          JSON.stringify({
-            type: "relay-signal",
-            target: targetPeerId,
-            signal: signal,
-          })
-        );
-      }
-    });
+    if (this.peers[peerId]) this.peers[peerId].signal(signal);
   }
 
   createPeer(peerId, initiator) {
@@ -180,19 +159,27 @@ class Beakon {
         );
       return;
     }
-    if (this.opts.debug === true)
-      console.debug("DEBUG: Creating peer...", {
-        initiator,
-        peerId,
-      });
+    if (this.opts.debug === true) {
+      console.debug(
+        "DEBUG: Creating peer...",
+        "peer count:",
+        currentPeerCount,
+        {
+          initiator,
+          peerId,
+        }
+      );
+    }
     const peer = new SimplePeer({
       initiator,
       trickle: true,
       wrtc: this.opts.simplePeerOpts.wrtc,
     });
 
-    peer.on("signal", (signal) => {
-      this.pubnub.publish({
+    peer.on("signal", async (signal) => {
+      if (this.opts.debug)
+        console.debug("DEBUG: Received new peer signal", signal);
+      const message = {
         channel: "peersChannel",
         message: {
           sender: this.peerId,
@@ -200,7 +187,15 @@ class Beakon {
           data: JSON.stringify(signal),
           target: peerId,
         },
-      });
+      };
+
+      try {
+        this.pubnub.publish(message);
+      } catch {
+        setTimeout(() => {
+          this.pubnub.publish(message);
+        }, 150);
+      }
     });
 
     peer.on("connect", () => {
@@ -216,12 +211,10 @@ class Beakon {
         });
     });
 
-    // let last;
     peer.on("data", (data) => {
-      // if (last === data) return;
+      if (this.last === data) return;
       let parsedData;
       try {
-        // last = data;
         parsedData = JSON.parse(data);
         if (this.opts.debug === true) console.debug("DEBUG:", parsedData);
         if (parsedData.to && parsedData.to !== this.peerId) return;
@@ -242,12 +235,25 @@ class Beakon {
       } catch (error) {
         console.error(`Error parsing data from ${peerId}:`, error);
       }
-      if (
-        parsedData.type === "relay-signal" &&
-        parsedData.target === this.peerId
-      ) {
-        this.handleSignal(parsedData.sender, parsedData.signal);
-      }
+
+      // switch (parsedData.type) {
+      //   case "announce-presence":
+      //     console.log("P2P", parsedData);
+      //     return process.exit(1);
+      //     if (this.opts.debug === true)
+      //       console.debug("DEBUG: Received P2P announcement:", parsedData);
+      //     this.handleNewPeer(parsedData.senderId);
+      //     break;
+      //   case "signal":
+      //     console.log("P2P:", parsedData);
+      //     return process.exit(1);
+      //     if (this.opts.debug === true)
+      //       console.debug("DEBUG: Received P2P signal:", parsedData);
+
+      //     this.handleSignal(parsedData.senderId, parsedData);
+      //     break;
+      // }
+      this.last = data;
     });
 
     peer.on("close", () => {
@@ -299,7 +305,7 @@ class Beakon {
       date: data.date ? data.date : new Date().getTime(),
       gossipId: gossipId,
       to: targetPeerIds,
-      type: type,
+      type: type ? type : data.type,
       content: typeof data === "object" ? data.content : data,
     };
 
@@ -379,21 +385,6 @@ class Beakon {
     }
     return array;
   }
-
-  // async reinitialize() {
-  //   setTimeout(async () => {
-  //     if (this.opts.debug) console.debug("Reinitializing beakon . . . ");
-  //     await this.destroy();
-  //     let opts = this.opts;
-  //     if (isBrowser) window.beakon = null;
-  //     new Beakon(opts);
-  //   }, 5000);
-  // }
-
-  // async destroy() {
-  //   await this.pubnub.unsubscribeAll();
-  //   await Promise.all(Object.values(this.peers).map((peer) => peer.destroy()));
-  // }
 }
 
 export default Beakon;

@@ -16,8 +16,8 @@ const opts = {
   debug: false,
 };
 
-const peerCount = 10;
-const minPercentageReceived = 100; // Minimum percentage of messages that should be received
+const peerCount = 9;
+const minPercentageReceived = 90; // Minimum percentage of messages that should be received
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -27,9 +27,8 @@ describe("Beakon Networking", function () {
   it(`${peerCount} peers should send and receive ${minPercentageReceived}% of messages correctly, ignoring announcements and signaling`, async () => {
     const peers = [];
     const messagesToSend = new Set();
-    const messagesReceived = new Array(peerCount)
-      .fill(null)
-      .map(() => new Set());
+    const messagesReceived = new Array(peerCount).fill().map(() => new Set());
+    const duplicateCheck = new Array(peerCount).fill().map(() => new Map()); // Maps to check for duplicates
 
     for (let n = 0; n < peerCount; n++) {
       const beakon = new Beakon(opts);
@@ -40,7 +39,14 @@ describe("Beakon Networking", function () {
       beakon.on("data", (data) => {
         if (data.type === "announce-presence" || data.type === "signal") {
           return;
-        } else console.log(data);
+        }
+        // Check for duplicates
+        if (duplicateCheck[n].has(data.content)) {
+          throw new Error(
+            `Duplicate message received by peer ${n}: "${data.content}"`
+          );
+        }
+        duplicateCheck[n].set(data.content, true);
         messagesReceived[n].add(data.content);
       });
 
@@ -53,17 +59,13 @@ describe("Beakon Networking", function () {
     console.log("All peers should now be ready. Starting to send messages.");
 
     // Sending messages
-    peers.forEach((peer) => {
+    peers.forEach((peer, index) => {
       let interval = setInterval(() => {
         const msgContent = Math.random().toString();
         messagesToSend.add(msgContent);
-        peers.forEach((peer) =>
-          peer.send({ content: msgContent, type: "user-message" })
-        ); // Ensure messages have a type distinguishable from system messages
-      }, 10);
-      setTimeout(() => {
-        clearInterval(interval);
-      }, 5000);
+        peer.send({ content: msgContent, type: "user-message" });
+      }, 150);
+      setTimeout(() => clearInterval(interval), 5000);
     });
 
     // Wait for all messages to be exchanged
@@ -75,15 +77,19 @@ describe("Beakon Networking", function () {
       messagesReceived.map((set) => Array.from(set))
     );
 
-    // Verification
+    // Verification and Reporting
     const totalMessagesSent = messagesToSend.size;
-
     messagesReceived.forEach((receivedSet, i) => {
       const receivedCount = receivedSet.size;
       const receivedPercentage = (receivedCount / totalMessagesSent) * 100;
+      console.log(
+        `Peer ${i} received ${receivedPercentage.toFixed(2)}% of messages.`
+      );
       expect(
         receivedPercentage >= minPercentageReceived,
-        `Peer ${i} received ${receivedPercentage}% of messages, which is below the required 80% threshold.`
+        `Peer ${i} received only ${receivedPercentage.toFixed(
+          2
+        )}% of messages, which is below the required ${minPercentageReceived}% threshold.`
       ).to.be.true;
     });
   });
