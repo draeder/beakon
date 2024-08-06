@@ -26,12 +26,13 @@ class Beakon {
         "Error: opts.simplePeerOpts.wrtc is required for node.js instances."
       );
     this.pubnub = new PubNub(opts.pubnubConfig);
-    this.peers = new Set();
+    this.peers = {};
+    this.peerList = [];
+    this.currentRelayIndex = 0;
+    this.seenSignals = new Set(); // Track seen signals to deduplicate
     this.seenGossipIds = new Set();
     this.seenMessageIds = new Set();
     this.seenMessages = [];
-    this.seen = new Set();
-    this.last = "";
     this.simplePeerOpts = opts.simplePeerOpts;
     this.init();
     if (isBrowser) window.beakon = this;
@@ -60,11 +61,9 @@ class Beakon {
       crypto.randomFillSync(array);
       const hash = crypto.createHash("sha1");
       hash.update(array);
-      // For Node.js, the hash.digest() returns a Buffer, so we directly use it
       return hash.digest("hex");
     }
 
-    // This part is for browsers, as Node.js uses the return inside the else block
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
   }
@@ -76,20 +75,38 @@ class Beakon {
   setupListeners() {
     this.pubnub.addListener({
       message: async (message) => {
-        // console.log(Object.keys(this.peers).length);
-        // if (Object.keys(this.peers).length > 1) return;
-        const { sender, data, type, target } = message.message;
+        const { sender, data, type, target, signalId } = message.message;
         if (sender === this.peerId) return;
         if (target && target !== this.peerId) return;
 
         if (this.opts.debug === true)
           console.debug("DEBUG: Received message from pubnub:", message);
+
+        const isSelectedRelay = this.isCurrentRelayPeer();
+        console.log(
+          `Peer ${this.peerId} is ${
+            isSelectedRelay ? "" : "not "
+          }the selected relay peer.`
+        );
+
         switch (type) {
           case "announce-presence":
             this.handleNewPeer(sender);
             break;
           case "signal":
-            this.handleSignal(sender, JSON.parse(data));
+            if (!this.seenSignals.has(signalId)) {
+              this.seenSignals.add(signalId);
+              if (isSelectedRelay) {
+                this.relaySignalToPeers(sender, data, signalId);
+              }
+              this.handleSignal(sender, JSON.parse(data));
+            }
+            break;
+          case "relay-signal":
+            if (!this.seenSignals.has(signalId)) {
+              this.seenSignals.add(signalId);
+              this.handleSignal(sender, JSON.parse(data));
+            }
             break;
         }
       },
@@ -97,8 +114,32 @@ class Beakon {
     this.pubnub.subscribe({ channels: ["peersChannel"] });
   }
 
+  handleNewPeer(peerId) {
+    if (!this.peers[peerId]) {
+      this.createPeer(peerId, true);
+      this.peerList.push(peerId);
+      this.updateRelayPeer();
+    }
+  }
+
+  handleSignal(peerId, signal) {
+    if (!this.peers[peerId]) {
+      this.createPeer(peerId, false);
+    }
+    const peer = this.peers[peerId];
+    if (peer && !peer.destroyed) {
+      try {
+        peer.signal(signal);
+      } catch (error) {
+        console.error(`Error signaling peer ${peerId}:`, error);
+      }
+    } else {
+      console.warn(`Peer ${peerId} is already destroyed.`);
+    }
+  }
+
   announcePresence() {
-    let message = {
+    const message = {
       channel: "peersChannel",
       message: {
         sender: this.peerId,
@@ -112,35 +153,6 @@ class Beakon {
         this.pubnub.publish(message);
       }, 150);
     }
-  }
-
-  handleNewPeer(peerId) {
-    if (!this.peers[peerId]) {
-      this.createPeer(peerId, true);
-    } else {
-      let message = {
-        channel: "peersChannel",
-        message: {
-          sender: this.peerId,
-          type: "announce-connection",
-          target: peerId,
-        },
-      };
-      try {
-        this.pubnub.publish(message);
-      } catch {
-        setTimeout(() => {
-          this.pubnub.publish(message);
-        }, 150);
-      }
-    }
-  }
-
-  handleSignal(peerId, signal) {
-    if (!this.peers[peerId]) {
-      this.createPeer(peerId, false);
-    }
-    if (this.peers[peerId]) this.peers[peerId].signal(signal);
   }
 
   createPeer(peerId, initiator) {
@@ -179,22 +191,31 @@ class Beakon {
     peer.on("signal", async (signal) => {
       if (this.opts.debug)
         console.debug("DEBUG: Received new peer signal", signal);
+      const signalId = await this.generateRandomSHA1Hash();
       const message = {
         channel: "peersChannel",
         message: {
           sender: this.peerId,
-          type: "signal",
+          type: this.isCurrentRelayPeer() ? "relay-signal" : "signal",
           data: JSON.stringify(signal),
           target: peerId,
+          signalId,
         },
       };
 
-      try {
-        this.pubnub.publish(message);
-      } catch {
-        setTimeout(() => {
-          this.pubnub.publish(message);
-        }, 150);
+      // Ensure the signal is only sent if the peer is still valid
+      if (this.peers[peerId] && !this.peers[peerId].destroyed) {
+        try {
+          this.pubnub.publish(message).catch(() => {
+            setTimeout(() => {
+              if (this.peers[peerId] && !this.peers[peerId].destroyed) {
+                this.pubnub.publish(message);
+              }
+            }, 150);
+          });
+        } catch (error) {
+          console.error(`Error publishing signal for peer ${peerId}:`, error);
+        }
       }
     });
 
@@ -229,30 +250,10 @@ class Beakon {
         if (this.seenMessageIds.has(parsedData.gossipId)) return;
         this.addSeenMessage(parsedData);
         this.seenMessageIds.add(parsedData.messageId);
-        // console.log(`Data from ${parsedData.senderId}:`, parsedData);
-
         this.send(parsedData, parsedData.to);
       } catch (error) {
         console.error(`Error parsing data from ${peerId}:`, error);
       }
-
-      // switch (parsedData.type) {
-      //   case "announce-presence":
-      //     console.log("P2P", parsedData);
-      //     return process.exit(1);
-      //     if (this.opts.debug === true)
-      //       console.debug("DEBUG: Received P2P announcement:", parsedData);
-      //     this.handleNewPeer(parsedData.senderId);
-      //     break;
-      //   case "signal":
-      //     console.log("P2P:", parsedData);
-      //     return process.exit(1);
-      //     if (this.opts.debug === true)
-      //       console.debug("DEBUG: Received P2P signal:", parsedData);
-
-      //     this.handleSignal(parsedData.senderId, parsedData);
-      //     break;
-      // }
       this.last = data;
     });
 
@@ -261,18 +262,17 @@ class Beakon {
         console.debug(`Disconnected from peer: ${peerId}`);
       this.emit("peer", { id: peerId, state: "disconnected" });
       delete this.peers[peerId];
+      this.peerList = this.peerList.filter((id) => id !== peerId);
       const peerCount = Object.keys(this.peers).length;
       if (this.opts.debug === true)
         console.debug("DEBUG: Peers in partial mesh:", peerCount);
-      // if (peerCount <= 1) this.reinitialize();
+      this.updateRelayPeer(); // Re-select relay peer on disconnection
     });
 
     peer.on("error", (error) => {
-      if (error.reason === "Close called") return;
-      const peerCount = Object.keys(this.peers).length;
-      if (this.opts.debug === true)
-        console.debug(`DEBUG: Error with peer ${peerId}:`, error);
-      // if (peerCount <= 1) this.reinitialize();
+      console.error(`DEBUG: Error with peer ${peerId}:`, error);
+      // Avoid destroying the peer unless absolutely necessary
+      if (error.code === "ERR_PEER_DESTROYED") return;
     });
 
     this.peers[peerId] = peer;
@@ -312,41 +312,53 @@ class Beakon {
     if (!this.seenMessages.includes(message)) this.emit("data", message);
     this.addSeenMessage(message);
 
-    let peersToSend = this.selectPeersToSend(data, targetPeerIds);
-    if (peersToSend.length < this.minPeers)
+    let peersToSend;
+    if (Object.keys(this.peers).length <= 5) {
+      // Broadcast to all peers if the peer count is 5 or less
       peersToSend = Object.keys(this.peers);
+    } else {
+      // Select peers to send based on the existing logic
+      peersToSend = this.selectPeersToSend(data, targetPeerIds);
+      if (peersToSend.length < this.minPeers)
+        peersToSend = Object.keys(this.peers);
+    }
 
-    if (this.opts.debug) console.debug("DEBUG: Gossiping to:", peersToSend);
+    if (this.opts.debug) console.debug("DEBUG: Sending to:", peersToSend);
 
     for (let peerId of peersToSend) {
-      try {
-        this.peers[peerId].send(JSON.stringify(message));
-      } catch (error) {
-        if (this.opts.debug === true)
-          console.debug(
-            `Error sending to peer. ${peerId} is no longer connected.`
-          );
-        delete this.peers[peerId];
-        await this.send(data, targetPeerIds);
+      const peer = this.peers[peerId];
+      if (peer && !peer.destroyed && peer.connected) {
+        try {
+          peer.send(JSON.stringify(message));
+        } catch (error) {
+          console.error(`Error sending to peer ${peerId}:`, error);
+        }
+      } else {
+        console.warn(`Peer ${peerId} is already destroyed or not ready.`);
       }
     }
-    this.last === data;
+    this.last = data;
   }
 
   selectPeersToSend(data, targetPeerIds) {
     const peerKeys = Object.keys(this.peers);
+
+    // Ensure data is properly defined and has necessary properties
+    const senderId = data && data.senderId ? data.senderId : null;
+    const gossiperId = data && data.gossiperId ? data.gossiperId : null;
+
     let filteredPeerIds = targetPeerIds
       ? peerKeys.filter(
           (peerId) =>
             targetPeerIds.includes(peerId) &&
             peerId !== this.peerId &&
-            peerId !== data.senderId
+            peerId !== senderId
         )
       : peerKeys.filter(
           (peerId) =>
             peerId !== this.peerId &&
-            peerId !== data.gossiperId &&
-            peerId !== data.senderId
+            peerId !== gossiperId &&
+            peerId !== senderId
         );
 
     if (filteredPeerIds.length < this.opts.minPeers) {
@@ -376,6 +388,42 @@ class Beakon {
     }
 
     return filteredPeerIds;
+  }
+
+  isCurrentRelayPeer() {
+    return this.peerId === this.peerList[this.currentRelayIndex];
+  }
+
+  updateRelayPeer() {
+    if (this.peerList.length > 0) {
+      this.currentRelayIndex =
+        (this.currentRelayIndex + 1) % this.peerList.length;
+      console.log("Updated relay peer:", this.peerList[this.currentRelayIndex]);
+    }
+  }
+
+  relaySignalToPeers(sender, signal, signalId) {
+    for (let peerId of Object.keys(this.peers)) {
+      if (peerId !== sender) {
+        const peer = this.peers[peerId];
+        if (peer && !peer.destroyed && peer.connected) {
+          try {
+            peer.send(
+              JSON.stringify({
+                type: "relay-signal",
+                target: peerId,
+                data: signal,
+                signalId,
+              })
+            );
+          } catch (error) {
+            console.error(`Error relaying signal to peer ${peerId}:`, error);
+          }
+        } else {
+          console.warn(`Peer ${peerId} is already destroyed or not ready.`);
+        }
+      }
+    }
   }
 
   shuffleArray(array) {
