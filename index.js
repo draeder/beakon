@@ -40,7 +40,7 @@ class Beakon {
 
   async init() {
     this.peerId = this.opts.peerId || (await this.generateRandomSHA1Hash());
-    console.log("This peer ID", this.peerId);
+    console.debug("This peer ID", this.peerId);
 
     this.setupListeners();
     this.announcePresence();
@@ -83,11 +83,12 @@ class Beakon {
           console.debug("DEBUG: Received message from pubnub:", message);
 
         const isSelectedRelay = this.isCurrentRelayPeer();
-        console.log(
-          `Peer ${this.peerId} is ${
-            isSelectedRelay ? "" : "not "
-          }the selected relay peer.`
-        );
+        if (this.opts.debug)
+          console.debug(
+            `Peer ${this.peerId} is ${
+              isSelectedRelay ? "" : "not "
+            }the selected relay peer.`
+          );
 
         switch (type) {
           case "announce-presence":
@@ -131,10 +132,11 @@ class Beakon {
       try {
         peer.signal(signal);
       } catch (error) {
-        console.error(`Error signaling peer ${peerId}:`, error);
+        console.debug(`Error signaling peer ${peerId}:`, error);
       }
     } else {
-      console.warn(`Peer ${peerId} is already destroyed.`);
+      console.debug(`Peer ${peerId} is already destroyed.`);
+      delete this.peers[peerId];
     }
   }
 
@@ -214,7 +216,7 @@ class Beakon {
             }, 150);
           });
         } catch (error) {
-          console.error(`Error publishing signal for peer ${peerId}:`, error);
+          console.debug(`Error publishing signal for peer ${peerId}:`, error);
         }
       }
     });
@@ -270,7 +272,7 @@ class Beakon {
     });
 
     peer.on("error", (error) => {
-      console.error(`DEBUG: Error with peer ${peerId}:`, error);
+      console.debug(`DEBUG: Error with peer ${peerId}:`, error);
       // Avoid destroying the peer unless absolutely necessary
       if (error.code === "ERR_PEER_DESTROYED") return;
     });
@@ -331,10 +333,11 @@ class Beakon {
         try {
           peer.send(JSON.stringify(message));
         } catch (error) {
-          console.error(`Error sending to peer ${peerId}:`, error);
+          console.debug(`Error sending to peer ${peerId}:`, error);
         }
       } else {
-        console.warn(`Peer ${peerId} is already destroyed or not ready.`);
+        console.debug(`Peer ${peerId} is already destroyed or not ready.`);
+        delete this.peers[peerId];
       }
     }
     this.last = data;
@@ -398,7 +401,11 @@ class Beakon {
     if (this.peerList.length > 0) {
       this.currentRelayIndex =
         (this.currentRelayIndex + 1) % this.peerList.length;
-      console.log("Updated relay peer:", this.peerList[this.currentRelayIndex]);
+      if (this.opts.debug)
+        console.debug(
+          "Updated relay peer:",
+          this.peerList[this.currentRelayIndex]
+        );
     }
   }
 
@@ -417,10 +424,11 @@ class Beakon {
               })
             );
           } catch (error) {
-            console.error(`Error relaying signal to peer ${peerId}:`, error);
+            console.debug(`Error relaying signal to peer ${peerId}:`, error);
           }
         } else {
-          console.warn(`Peer ${peerId} is already destroyed or not ready.`);
+          // console.warn(`Peer ${peerId} is already destroyed or not ready.`);
+          delete this.peers[peerId];
         }
       }
     }
