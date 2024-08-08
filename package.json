@@ -34,7 +34,9 @@
     "webrtc": "^1.14.1"
   },
   "dependencies": {
+    "@roamhq/wrtc": "^0.8.0",
     "pubnub": "^7.6.1",
-    "simple-peer": "^9.11.1"
+    "simple-peer": "^9.11.1",
+    "sinon": "^18.0.0"
   }
 }

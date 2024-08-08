@@ -33,6 +33,7 @@ class Beakon {
     this.seenGossipIds = new Set();
     this.seenMessageIds = new Set();
     this.seenMessages = [];
+    this.peerLastContact = {}; // Track the last contact time with each peer
     this.simplePeerOpts = opts.simplePeerOpts;
     this.init();
     if (isBrowser) window.beakon = this;
@@ -79,8 +80,8 @@ class Beakon {
         if (sender === this.peerId) return;
         if (target && target !== this.peerId) return;
 
-        if (this.opts.debug === true)
-          console.debug("DEBUG: Received message from pubnub:", message);
+        if (this.opts.debug)
+          console.debug("DEBUG: Received message from PubNub:", message);
 
         const isSelectedRelay = this.isCurrentRelayPeer();
         if (this.opts.debug)
@@ -120,6 +121,8 @@ class Beakon {
       this.createPeer(peerId, true);
       this.peerList.push(peerId);
       this.updateRelayPeer();
+      this.sendMessageHistory(peerId); // Send message history to new peer
+      this.requestMessageHistory(peerId); // Request message history from new peer
     }
   }
 
@@ -149,11 +152,9 @@ class Beakon {
       },
     };
     try {
-      this.pubnub.publish(message);
-    } catch {
-      setTimeout(() => {
-        this.pubnub.publish(message);
-      }, 150);
+      this.pubnub.publish(message); // Send only once
+    } catch (error) {
+      console.error("Failed to announce presence:", error);
     }
   }
 
@@ -230,8 +231,14 @@ class Beakon {
         this.seenMessages.forEach((message) => {
           if (this.opts.debug === true)
             console.debug("DEBUG: Trying to send history.", message);
-          setTimeout(() => this.send(message, message.to), 150);
+          setTimeout(
+            () => this.send(message, message.to, message.type, 0, 1, true),
+            150
+          );
         });
+
+      // Update last contact time
+      this.peerLastContact[peerId] = Date.now();
     });
 
     peer.on("data", (data) => {
@@ -252,7 +259,19 @@ class Beakon {
         if (this.seenMessageIds.has(parsedData.gossipId)) return;
         this.addSeenMessage(parsedData);
         this.seenMessageIds.add(parsedData.messageId);
-        this.send(parsedData, parsedData.to);
+
+        // Only gossip broadcast messages
+        if (!parsedData.to) {
+          this.send(parsedData, parsedData.to, parsedData.type, 0, 1, true);
+        }
+
+        // Update last contact time
+        this.peerLastContact[parsedData.senderId] = Date.now();
+
+        // Handle message history synchronization
+        if (parsedData.type !== "message-history") {
+          this.handleMessageHistorySynchronization(parsedData.senderId);
+        }
       } catch (error) {
         console.error(`Error parsing data from ${peerId}:`, error);
       }
@@ -281,14 +300,22 @@ class Beakon {
   }
 
   addSeenMessage(message) {
-    for (let msg in this.seenMessages) {
-      if (message.gossipId !== msg.gossipId) this.seenMessages.push(message);
+    if (message && !this.seenMessageIds.has(message.messageId)) {
+      this.seenMessages.push(message);
+      this.seenMessageIds.add(message.messageId);
       if (this.seenMessages.length > this.opts.maxHistory)
         this.seenMessages.shift();
     }
   }
 
-  async send(data, to, type = null, retries = 0) {
+  async send(
+    data,
+    to,
+    type = null,
+    retries = 0,
+    backoff = 1,
+    isHistoryMessage = false
+  ) {
     if (this.last === data) return;
     let gossipId = !data.gossipId
       ? await this.generateRandomSHA1Hash()
@@ -311,15 +338,15 @@ class Beakon {
       content: typeof data === "object" ? data.content : data,
     };
 
+    if (!message.content) return;
+
     if (!this.seenMessages.includes(message)) this.emit("data", message);
     this.addSeenMessage(message);
 
     let peersToSend;
     if (Object.keys(this.peers).length <= 5) {
-      // Broadcast to all peers if the peer count is 5 or less
       peersToSend = Object.keys(this.peers);
     } else {
-      // Select peers to send based on the existing logic
       peersToSend = this.selectPeersToSend(data, targetPeerIds);
       if (peersToSend.length < this.minPeers)
         peersToSend = Object.keys(this.peers);
@@ -327,26 +354,72 @@ class Beakon {
 
     if (this.opts.debug) console.debug("DEBUG: Sending to:", peersToSend);
 
+    let success = false;
+
     for (let peerId of peersToSend) {
       const peer = this.peers[peerId];
       if (peer && !peer.destroyed && peer.connected) {
         try {
           peer.send(JSON.stringify(message));
+          success = true;
         } catch (error) {
           console.debug(`Error sending to peer ${peerId}:`, error);
         }
       } else {
-        console.debug(`Peer ${peerId} is already destroyed or not ready.`);
+        if (this.opts.debug)
+          console.debug(`Peer ${peerId} is already destroyed or not ready.`);
         delete this.peers[peerId];
       }
     }
+
+    if (!success && retries < this.opts.maxRetries) {
+      setTimeout(() => {
+        const newPeersToSend = this.selectPeersToSend(data, targetPeerIds); // Select new peers
+        this.send(
+          data,
+          newPeersToSend,
+          type,
+          retries + 1,
+          backoff * 2,
+          isHistoryMessage
+        );
+      }, this.opts.retryInterval * backoff); // Increase retry interval to reduce frequency
+    }
+
     this.last = data;
+
+    // Resend each message in message history after sending a new message, but only if this is not a history message
+    if (!isHistoryMessage && !message.to) {
+      for (let oldMessage of this.seenMessages) {
+        const resendTargetPeerIds = this.selectPeersToSend(
+          oldMessage,
+          oldMessage.to
+        );
+        if (this.opts.debug)
+          console.debug(
+            "DEBUG: Resending message history to:",
+            resendTargetPeerIds
+          );
+        for (let peerId of resendTargetPeerIds) {
+          const peer = this.peers[peerId];
+          if (peer && !peer.destroyed && peer.connected) {
+            try {
+              peer.send(JSON.stringify(oldMessage));
+            } catch (error) {
+              console.debug(
+                `Error resending message history to peer ${peerId}:`,
+                error
+              );
+            }
+          }
+        }
+      }
+    }
   }
 
   selectPeersToSend(data, targetPeerIds) {
     const peerKeys = Object.keys(this.peers);
 
-    // Ensure data is properly defined and has necessary properties
     const senderId = data && data.senderId ? data.senderId : null;
     const gossiperId = data && data.gossiperId ? data.gossiperId : null;
 
@@ -363,6 +436,10 @@ class Beakon {
             peerId !== gossiperId &&
             peerId !== senderId
         );
+
+    filteredPeerIds.sort(
+      (a, b) => (this.peerLastContact[a] || 0) - (this.peerLastContact[b] || 0)
+    );
 
     if (filteredPeerIds.length < this.opts.minPeers) {
       const additionalPeersNeeded = this.opts.minPeers - filteredPeerIds.length;
@@ -427,7 +504,7 @@ class Beakon {
             console.debug(`Error relaying signal to peer ${peerId}:`, error);
           }
         } else {
-          // console.warn(`Peer ${peerId} is already destroyed or not ready.`);
+          console.debug(`Peer ${peerId} is already destroyed or not ready.`);
           delete this.peers[peerId];
         }
       }
@@ -440,6 +517,135 @@ class Beakon {
       [array[i], array[j]] = [array[j], array[i]];
     }
     return array;
+  }
+
+  // New methods for message history synchronization
+  async sendMessageHistory(targetPeerId) {
+    const peer = this.peers[targetPeerId];
+    if (peer && !peer.destroyed && peer.connected) {
+      try {
+        const messageHistory = this.seenMessages;
+        peer.send(
+          JSON.stringify({
+            type: "message-history",
+            data: messageHistory,
+            sender: this.peerId,
+          })
+        );
+      } catch (error) {
+        console.debug(
+          `Error sending message history to peer ${targetPeerId}:`,
+          error
+        );
+      }
+    }
+  }
+
+  async requestMessageHistory(targetPeerId) {
+    const peer = this.peers[targetPeerId];
+    if (peer && !peer.destroyed && peer.connected) {
+      try {
+        peer.send(
+          JSON.stringify({
+            type: "request-message-history",
+            sender: this.peerId,
+          })
+        );
+      } catch (error) {
+        console.debug(
+          `Error requesting message history from peer ${targetPeerId}:`,
+          error
+        );
+      }
+    }
+  }
+
+  handleMessageHistorySynchronization(senderId) {
+    const peer = this.peers[senderId];
+    if (peer && !peer.destroyed && peer.connected) {
+      try {
+        const messageHistory = this.seenMessages;
+        peer.send(
+          JSON.stringify({
+            type: "message-history",
+            data: messageHistory,
+            sender: this.peerId,
+          })
+        );
+      } catch (error) {
+        console.debug(
+          `Error sending message history to peer ${senderId}:`,
+          error
+        );
+      }
+    }
+  }
+
+  handleMessageHistory(senderId, receivedHistory) {
+    const missingMessages = this.getMissingMessages(receivedHistory);
+    if (missingMessages.length > 0) {
+      this.requestMissingMessages(senderId, missingMessages);
+    }
+  }
+
+  getMissingMessages(receivedHistory) {
+    const localMessageIds = new Set(
+      this.seenMessages.map((msg) => msg.messageId)
+    );
+    return receivedHistory.filter((msg) => !localMessageIds.has(msg.messageId));
+  }
+
+  async requestMissingMessages(senderId, missingMessages) {
+    const peer = this.peers[senderId];
+    if (peer && !peer.destroyed && peer.connected) {
+      try {
+        peer.send(
+          JSON.stringify({
+            type: "request-messages",
+            data: missingMessages,
+            sender: this.peerId,
+          })
+        );
+      } catch (error) {
+        console.debug(
+          `Error requesting missing messages from peer ${senderId}:`,
+          error
+        );
+      }
+    }
+  }
+
+  handleRequestMessages(senderId, requestedMessages) {
+    const peer = this.peers[senderId];
+    if (peer && !peer.destroyed && peer.connected) {
+      try {
+        const messagesToSend = this.seenMessages.filter((msg) =>
+          requestedMessages.some((reqMsg) => reqMsg.messageId === msg.messageId)
+        );
+        peer.send(
+          JSON.stringify({
+            type: "response-messages",
+            data: messagesToSend,
+            sender: this.peerId,
+          })
+        );
+      } catch (error) {
+        console.debug(
+          `Error sending requested messages to peer ${senderId}:`,
+          error
+        );
+      }
+    }
+  }
+
+  handleResponseMessages(receivedMessages) {
+    receivedMessages.forEach((message) => {
+      if (message && !this.seenMessageIds.has(message.messageId)) {
+        this.seenMessages.push(message);
+        this.seenMessageIds.add(message.messageId);
+        this.emit("data", message);
+      }
+    });
   }
 }
 

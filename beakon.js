@@ -6,10 +6,12 @@ const opts = {
   pubnubConfig: auth,
   simplePeerOpts: { wrtc: wrtc },
   minPeers: 2,
-  softCap: 3,
-  maxPeers: 3,
+  softCap: 6,
+  maxPeers: 9,
   minFanout: 0.33,
   maxFanout: 0.66,
+  maxRetries: 6,
+  retryInterval: 120,
   maxHistory: 10,
   debug: false, // Enable debug for detailed logs
 };
