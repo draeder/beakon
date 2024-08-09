@@ -345,8 +345,7 @@ class Beakon {
     });
 
     peer.on("error", (error) => {
-      if (this.opts.debug)
-        console.debug(`DEBUG: Error with peer ${peerId}:`, error);
+      console.debug(`DEBUG: Error with peer ${peerId}:`, error);
       // Avoid destroying the peer unless absolutely necessary
       if (error.code === "ERR_PEER_DESTROYED") return;
     });
