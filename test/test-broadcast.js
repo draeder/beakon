@@ -1,24 +1,25 @@
 import { expect } from "chai";
 import Beakon from "../index.js";
 import auth from "../pubnub/auth.js";
-import wrtc from "wrtc";
+// import wrtc from "wrtc";
+import wrtc from "@roamhq/wrtc";
 import { describe, it } from "mocha";
 
 const opts = {
   pubnubConfig: auth,
   simplePeerOpts: { wrtc },
-  minPeers: 2,
-  softCap: 6,
-  maxPeers: 9,
+  minPeers: 1,
+  softCap: 3,
+  maxPeers: 3,
   minFanout: 0.33,
   maxFanout: 0.66,
   maxRetries: 6,
   retryInterval: 10,
-  maxHistory: 10,
+  maxHistory: 1,
   debug: false, // Enable debug for more detailed logs
 };
 
-const peerCount = 9;
+const peerCount = 20;
 const minPercentageReceived = 90; // Minimum percentage of messages that should be received
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -75,11 +76,13 @@ describe("Beakon Broadcast Messaging", function () {
         messagesToSend.add(msgContent);
         peer.send({ content: msgContent, type: "user-message" });
       }, 150);
-      setTimeout(() => clearInterval(interval), 5000);
+
+      // Send messages for 15000ms (15 seconds) instead of 5000ms to ensure over 100 messages are sent
+      setTimeout(() => clearInterval(interval), 15000); // This should give roughly 100 messages (15s/150ms = 100)
     });
 
     // Wait for all messages to be exchanged
-    await delay(15000); // Increased delay for message propagation
+    await delay(20000); // Increased delay to allow time for all messages to propagate
 
     // Log received messages for debugging
     console.log(

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Hyperswarm-web Example</title>
+  <script type="module" src="https://cdn.jsdelivr.net/npm/hyperswarm-web"></script>
+</head>
+<body>
+  <script>
+    // Create a new Hyperswarm instance for the browser
+    const swarm = new window.Hyperswarm();
+
+    // Define a topic for peer discovery (this should be the same for both Node.js and browser peers)
+    const topic = new Uint8Array(new TextEncoder().encode('your-topic'));
+
+    // Join the topic to announce this peer and discover others
+    swarm.join(topic, { lookup: true, announce: true });
+
+    swarm.on('connection', (socket, details) => {
+      console.log('New connection from', details.peer);
+
+      // Handle incoming data from the Node.js peer
+      socket.on('data', (data) => {
+        console.log('Received:', new TextDecoder().decode(data));
+      });
+
+      // Send signaling data to the connected peer
+      socket.write(new TextEncoder().encode('Hello from browser peer'));
+    });
+
+    // Handle errors
+    swarm.on('error', (err) => {
+      console.error('Error:', err);
+    });
+  </script>
+</body>
+</html>

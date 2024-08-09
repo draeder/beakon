@@ -1,18 +1,19 @@
 import Beakon from "./index.js";
 import auth from "./pubnub/auth.js";
-import wrtc from "wrtc";
+// import wrtc from "wrtc";
+import wrtc from "@roamhq/wrtc";
 
 const opts = {
   pubnubConfig: auth,
   simplePeerOpts: { wrtc: wrtc },
-  minPeers: 2,
-  softCap: 6,
-  maxPeers: 9,
+  minPeers: 1,
+  softCap: 3,
+  maxPeers: 3,
   minFanout: 0.33,
   maxFanout: 0.66,
   maxRetries: 6,
-  retryInterval: 120,
-  maxHistory: 10,
+  retryInterval: 10,
+  maxHistory: 1,
   debug: false, // Enable debug for detailed logs
 };
 
@@ -30,7 +31,8 @@ beakon.on("data", (data) => {
       try {
         peer.signal(JSON.parse(data.content));
       } catch (error) {
-        console.error(`Error signaling peer ${data.senderId}:`, error);
+        if (opts.debug)
+          console.debug(`Error signaling peer ${data.senderId}:`, error);
       }
     }
   } else {
